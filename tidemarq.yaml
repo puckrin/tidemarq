@@ -1,0 +1,20 @@
+server:
+  http_port: 8080
+  https_port: 8443
+  data_dir: /data
+  static_dir: /app/frontend/dist
+
+database:
+  path: /data/tidemarq.db
+
+tls:
+  cert_file: /data/certs/server.crt
+  key_file: /data/certs/server.key
+
+auth:
+  jwt_secret: "change-me-in-production"
+  jwt_ttl: 24h
+
+admin:
+  username: admin
+  password: admin

@@ -1,0 +1,77 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/tidemarq/tidemarq/internal/api"
+	"github.com/tidemarq/tidemarq/internal/auth"
+	"github.com/tidemarq/tidemarq/internal/config"
+	"github.com/tidemarq/tidemarq/internal/db"
+	"github.com/tidemarq/tidemarq/migrations"
+)
+
+func main() {
+	configPath := flag.String("config", "", "path to config file (default: TIDEMARQ_CONFIG env var or tidemarq.yaml)")
+	flag.Parse()
+
+	if *configPath == "" {
+		if v := os.Getenv("TIDEMARQ_CONFIG"); v != "" {
+			*configPath = v
+		}
+	}
+
+	if err := run(*configPath); err != nil {
+		log.Fatalf("fatal: %v", err)
+	}
+}
+
+func run(configPath string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	database, err := db.Open(cfg.Database.Path)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer database.Close()
+
+	if err := database.Migrate(migrations.FS); err != nil {
+		return fmt.Errorf("running migrations: %w", err)
+	}
+
+	if err := seedAdmin(database, cfg); err != nil {
+		return fmt.Errorf("seeding admin: %w", err)
+	}
+
+	authSvc := auth.NewService(cfg.Auth.JWTSecret, cfg.Auth.JWTTTL)
+	srv := api.NewServer(cfg, database, authSvc)
+
+	log.Printf("tidemarq %s starting — https://localhost:%d", api.Version, cfg.Server.HTTPSPort)
+	return srv.Run()
+}
+
+func seedAdmin(database *db.DB, cfg *config.Config) error {
+	count, err := database.UserCount(context.Background())
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	log.Printf("no users found — creating default admin account (%q)", cfg.Admin.Username)
+
+	hash, err := auth.HashPassword(cfg.Admin.Password)
+	if err != nil {
+		return err
+	}
+
+	_, err = database.CreateUser(context.Background(), cfg.Admin.Username, hash, "admin")
+	return err
+}

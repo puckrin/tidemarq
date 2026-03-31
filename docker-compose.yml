@@ -1,0 +1,14 @@
+services:
+  tidemarq:
+    build: .
+    ports:
+      - "80:8080"
+      - "8443:8443"
+    volumes:
+      - tidemarq_data:/data
+    environment:
+      - TIDEMARQ_CONFIG=/etc/tidemarq/tidemarq.yaml
+    restart: unless-stopped
+
+volumes:
+  tidemarq_data:
