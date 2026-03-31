@@ -1,0 +1,35 @@
+# Backend build output
+backend/bin/
+backend/tmp/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Environment and secrets
+.env
+.env.*
+tidemarq.yaml.local
+
+# TLS certificates (auto-generated)
+*.pem
+*.crt
+*.key
+
+# Docker volumes (if mapped locally)
+data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp

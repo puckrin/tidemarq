@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pandoc --track-changes=all \"tidemarq-style-guide.docx\" -o style-guide-output.md)",
+      "Bash(python \"C:\\\\Users\\\\shaun\\\\AppData\\\\Roaming\\\\Claude\\\\local-agent-mode-sessions\\\\skills-plugin\\\\331d22ab-bb19-4651-8ea8-aebcb79be403\\\\08074299-349e-4802-9ced-5219d6be492f\\\\skills\\\\docx\\\\scripts\\\\office\\\\unpack.py\" \"F:\\\\Projects\\\\tidemarq\\\\tidemarq-style-guide.docx\" \"F:\\\\Projects\\\\tidemarq\\\\style-guide-unpacked\")",
+      "Bash(pip install:*)"
+    ]
+  }
+}
