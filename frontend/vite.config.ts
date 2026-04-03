@@ -5,9 +5,14 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': 'https://localhost:8443',
-      '/health': 'https://localhost:8443',
-      '/ws': { target: 'wss://localhost:8443', ws: true },
+      '/api':    { target: 'https://localhost:8443', secure: false },
+      '/health': { target: 'https://localhost:8443', secure: false },
+      '/ws':     { target: 'wss://localhost:8443',  ws: true, secure: false },
     },
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
   },
 })
