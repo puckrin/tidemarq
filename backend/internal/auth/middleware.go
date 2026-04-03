@@ -32,13 +32,17 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// RequireRole returns middleware that rejects requests whose token role does
-// not match the required role. Must be chained after Middleware.
-func RequireRole(role string) func(http.Handler) http.Handler {
+// RequireRole returns middleware that rejects requests whose token role is not
+// one of the allowed roles. Must be chained after Middleware.
+func RequireRole(roles ...string) func(http.Handler) http.Handler {
+	allowed := make(map[string]bool, len(roles))
+	for _, r := range roles {
+		allowed[r] = true
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims := ClaimsFromContext(r.Context())
-			if claims == nil || claims.Role != role {
+			if claims == nil || !allowed[claims.Role] {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusForbidden)
 				w.Write([]byte(`{"error":"forbidden","code":"forbidden"}`)) //nolint:errcheck

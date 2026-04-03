@@ -19,21 +19,24 @@ import (
 	"github.com/tidemarq/tidemarq/internal/auth"
 	"github.com/tidemarq/tidemarq/internal/config"
 	"github.com/tidemarq/tidemarq/internal/db"
+	"github.com/tidemarq/tidemarq/internal/jobs"
 )
 
 // Server holds the application's dependencies.
 type Server struct {
 	db        *db.DB
 	authSvc   *auth.Service
+	jobsSvc   *jobs.Service
 	cfg       *config.Config
 	startTime time.Time
 }
 
 // NewServer creates a Server with the given dependencies.
-func NewServer(cfg *config.Config, database *db.DB, authSvc *auth.Service) *Server {
+func NewServer(cfg *config.Config, database *db.DB, authSvc *auth.Service, jobsSvc *jobs.Service) *Server {
 	return &Server{
 		db:        database,
 		authSvc:   authSvc,
+		jobsSvc:   jobsSvc,
 		cfg:       cfg,
 		startTime: time.Now(),
 	}

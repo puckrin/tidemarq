@@ -11,6 +11,9 @@ import (
 	"github.com/tidemarq/tidemarq/internal/auth"
 	"github.com/tidemarq/tidemarq/internal/config"
 	"github.com/tidemarq/tidemarq/internal/db"
+	"github.com/tidemarq/tidemarq/internal/engine"
+	"github.com/tidemarq/tidemarq/internal/jobs"
+	"github.com/tidemarq/tidemarq/internal/manifest"
 	"github.com/tidemarq/tidemarq/migrations"
 )
 
@@ -50,7 +53,10 @@ func run(configPath string) error {
 	}
 
 	authSvc := auth.NewService(cfg.Auth.JWTSecret, cfg.Auth.JWTTTL)
-	srv := api.NewServer(cfg, database, authSvc)
+	manifestStore := manifest.New(database)
+	syncEngine := engine.New(manifestStore)
+	jobsSvc := jobs.New(database, syncEngine)
+	srv := api.NewServer(cfg, database, authSvc, jobsSvc)
 
 	log.Printf("tidemarq %s starting — https://localhost:%d", api.Version, cfg.Server.HTTPSPort)
 	return srv.Run()

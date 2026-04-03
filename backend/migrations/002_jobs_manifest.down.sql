@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS manifest_entries;
+DROP TABLE IF EXISTS jobs;

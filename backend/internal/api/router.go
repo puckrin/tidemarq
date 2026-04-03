@@ -33,6 +33,17 @@ func (s *Server) Routes() http.Handler {
 			r.Put("/api/v1/users/{id}", s.handleUpdateUser)
 			r.Delete("/api/v1/users/{id}", s.handleDeleteUser)
 		})
+
+		// Job management: read access for all authenticated users; write for admin/operator.
+		r.Get("/api/v1/jobs", s.handleListJobs)
+		r.Get("/api/v1/jobs/{id}", s.handleGetJob)
+
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireRole("admin", "operator"))
+
+			r.Post("/api/v1/jobs", s.handleCreateJob)
+			r.Post("/api/v1/jobs/{id}/run", s.handleRunJob)
+		})
 	})
 
 	// Static frontend — serves frontend/dist in production; holding page otherwise.
