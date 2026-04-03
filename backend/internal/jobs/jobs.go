@@ -1,21 +1,27 @@
-// Package jobs manages sync job lifecycle.
+// Package jobs manages sync job lifecycle: CRUD, scheduling, FS watching,
+// pause/resume, and progress broadcasting.
 package jobs
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 
+	"github.com/robfig/cron/v3"
 	"github.com/tidemarq/tidemarq/internal/db"
 	"github.com/tidemarq/tidemarq/internal/engine"
+	"github.com/tidemarq/tidemarq/internal/watch"
+	"github.com/tidemarq/tidemarq/internal/ws"
 )
 
-// ErrAlreadyRunning is returned when a job is triggered while already running.
-var ErrAlreadyRunning = errors.New("job is already running")
-
-// ErrNotFound is returned when the requested job does not exist.
-var ErrNotFound = errors.New("job not found")
+// Sentinel errors.
+var (
+	ErrAlreadyRunning = errors.New("job is already running")
+	ErrNotRunning     = errors.New("job is not running")
+	ErrNotFound       = errors.New("job not found")
+)
 
 // CreateParams holds the fields required to create a new job.
 type CreateParams struct {
@@ -24,27 +30,83 @@ type CreateParams struct {
 	DestinationPath  string
 	Mode             string
 	BandwidthLimitKB int64
+	CronSchedule     string
+	WatchEnabled     bool
 }
 
-// Service manages job CRUD and execution.
+// UpdateParams holds the fields that may be updated on a job.
+type UpdateParams struct {
+	Name             string
+	SourcePath       string
+	DestinationPath  string
+	Mode             string
+	BandwidthLimitKB int64
+	CronSchedule     string
+	WatchEnabled     bool
+}
+
+// runContext tracks an in-progress job run.
+type runContext struct {
+	cancel  context.CancelFunc
+	pauseCh chan struct{} // closed to signal a pause
+}
+
+// Service manages job CRUD, scheduling, watching, and execution.
 type Service struct {
-	db     *db.DB
-	engine *engine.Engine
+	db      *db.DB
+	engine  *engine.Engine
+	hub     *ws.Hub
+	watcher *watch.Manager
 
-	mu      sync.Mutex
-	running map[int64]bool
+	scheduler *cron.Cron
+
+	mu       sync.Mutex
+	running  map[int64]*runContext
+	cronIDs  map[int64]cron.EntryID // job ID → cron entry ID
 }
 
-// New creates a Service with the given dependencies.
-func New(database *db.DB, eng *engine.Engine) *Service {
+// New creates a Service. Call Start to activate scheduling and watching.
+func New(database *db.DB, eng *engine.Engine, hub *ws.Hub, watcher *watch.Manager) *Service {
 	return &Service{
 		db:      database,
 		engine:  eng,
-		running: make(map[int64]bool),
+		hub:     hub,
+		watcher: watcher,
+		scheduler: cron.New(),
+		running:  make(map[int64]*runContext),
+		cronIDs:  make(map[int64]cron.EntryID),
 	}
 }
 
-// Create inserts a new job and returns it.
+// Start loads all jobs from the database, registers cron and watch triggers,
+// and starts the cron scheduler. Call once at application startup.
+func (s *Service) Start(ctx context.Context) error {
+	jobs, err := s.db.ListJobs(ctx)
+	if err != nil {
+		return fmt.Errorf("loading jobs: %w", err)
+	}
+	for _, j := range jobs {
+		if err := s.registerTriggers(j); err != nil {
+			log.Printf("jobs: failed to register triggers for job %d (%s): %v", j.ID, j.Name, err)
+		}
+		// Reset any jobs that were left in "running" state by a prior crash.
+		if j.Status == "running" {
+			_ = s.db.UpdateJobStatus(ctx, j.ID, "idle", nil, false)
+		}
+	}
+	s.scheduler.Start()
+	return nil
+}
+
+// Stop gracefully shuts down the scheduler and watcher.
+func (s *Service) Stop() {
+	s.scheduler.Stop()
+	if s.watcher != nil {
+		s.watcher.Close()
+	}
+}
+
+// Create inserts a new job, registers its triggers, and returns it.
 func (s *Service) Create(ctx context.Context, p CreateParams) (*db.Job, error) {
 	if p.Name == "" || p.SourcePath == "" || p.DestinationPath == "" {
 		return nil, errors.New("name, source_path, and destination_path are required")
@@ -52,13 +114,27 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*db.Job, error) {
 	if !validMode(p.Mode) {
 		return nil, fmt.Errorf("invalid mode %q: must be one-way-backup, one-way-mirror, or two-way", p.Mode)
 	}
-	return s.db.CreateJob(ctx, db.CreateJobParams{
+	if p.CronSchedule != "" {
+		if _, err := cron.ParseStandard(p.CronSchedule); err != nil {
+			return nil, fmt.Errorf("invalid cron_schedule: %w", err)
+		}
+	}
+	j, err := s.db.CreateJob(ctx, db.CreateJobParams{
 		Name:             p.Name,
 		SourcePath:       p.SourcePath,
 		DestinationPath:  p.DestinationPath,
 		Mode:             p.Mode,
 		BandwidthLimitKB: p.BandwidthLimitKB,
+		CronSchedule:     p.CronSchedule,
+		WatchEnabled:     p.WatchEnabled,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.registerTriggers(j); err != nil {
+		log.Printf("jobs: registering triggers for job %d: %v", j.ID, err)
+	}
+	return j, nil
 }
 
 // Get returns the job with the given ID.
@@ -75,9 +151,54 @@ func (s *Service) List(ctx context.Context) ([]*db.Job, error) {
 	return s.db.ListJobs(ctx)
 }
 
-// Run starts job id asynchronously in a goroutine and returns immediately.
-// Returns ErrAlreadyRunning if the job is currently executing.
-// Returns ErrNotFound if the job does not exist.
+// Update applies p to the job, re-registers triggers, and returns the updated job.
+func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (*db.Job, error) {
+	if p.Name == "" || p.SourcePath == "" || p.DestinationPath == "" {
+		return nil, errors.New("name, source_path, and destination_path are required")
+	}
+	if !validMode(p.Mode) {
+		return nil, fmt.Errorf("invalid mode %q", p.Mode)
+	}
+	if p.CronSchedule != "" {
+		if _, err := cron.ParseStandard(p.CronSchedule); err != nil {
+			return nil, fmt.Errorf("invalid cron_schedule: %w", err)
+		}
+	}
+
+	j, err := s.db.UpdateJob(ctx, id, db.UpdateJobParams{
+		Name:             p.Name,
+		SourcePath:       p.SourcePath,
+		DestinationPath:  p.DestinationPath,
+		Mode:             p.Mode,
+		BandwidthLimitKB: p.BandwidthLimitKB,
+		CronSchedule:     p.CronSchedule,
+		WatchEnabled:     p.WatchEnabled,
+	})
+	if errors.Is(err, db.ErrNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	s.deregisterTriggers(id)
+	if err := s.registerTriggers(j); err != nil {
+		log.Printf("jobs: re-registering triggers for job %d: %v", id, err)
+	}
+	return j, nil
+}
+
+// Delete removes the job and cleans up its triggers.
+func (s *Service) Delete(ctx context.Context, id int64) error {
+	s.deregisterTriggers(id)
+	err := s.db.DeleteJob(ctx, id)
+	if errors.Is(err, db.ErrNotFound) {
+		return ErrNotFound
+	}
+	return err
+}
+
+// Run starts job id asynchronously. Returns ErrAlreadyRunning if already executing.
 func (s *Service) Run(ctx context.Context, id int64) error {
 	job, err := s.Get(ctx, id)
 	if err != nil {
@@ -85,46 +206,152 @@ func (s *Service) Run(ctx context.Context, id int64) error {
 	}
 
 	s.mu.Lock()
-	if s.running[id] {
+	if _, ok := s.running[id]; ok {
 		s.mu.Unlock()
 		return ErrAlreadyRunning
 	}
-	s.running[id] = true
+	runCtx, cancel := context.WithCancel(context.Background())
+	pauseCh := make(chan struct{})
+	s.running[id] = &runContext{cancel: cancel, pauseCh: pauseCh}
 	s.mu.Unlock()
 
-	go func() {
-		defer func() {
-			s.mu.Lock()
-			delete(s.running, id)
-			s.mu.Unlock()
-		}()
+	go s.execRun(runCtx, job, pauseCh, cancel)
+	return nil
+}
 
-		// Mark as running.
-		_ = s.db.UpdateJobStatus(context.Background(), id, "running", nil, false)
+// Pause signals a running job to stop gracefully after its current file.
+func (s *Service) Pause(ctx context.Context, id int64) error {
+	s.mu.Lock()
+	rc, ok := s.running[id]
+	s.mu.Unlock()
+	if !ok {
+		return ErrNotRunning
+	}
+	// Close the pause channel exactly once.
+	select {
+	case <-rc.pauseCh:
+		// Already closed.
+	default:
+		close(rc.pauseCh)
+	}
+	return nil
+}
 
-		result, runErr := s.engine.Run(context.Background(), engine.Config{
-			JobID:            id,
-			SourcePath:       job.SourcePath,
-			DestinationPath:  job.DestinationPath,
-			BandwidthLimitKB: job.BandwidthLimitKB,
-		})
+// Resume triggers a new run for a paused job. Since the manifest tracks all
+// completed files, the engine automatically skips already-synced files.
+func (s *Service) Resume(ctx context.Context, id int64) error {
+	return s.Run(ctx, id)
+}
 
-		if runErr != nil {
-			msg := runErr.Error()
-			_ = s.db.UpdateJobStatus(context.Background(), id, "error", &msg, true)
-			return
-		}
-
-		if len(result.Errors) > 0 {
-			msg := fmt.Sprintf("%d file(s) failed: %v", len(result.Errors), result.Errors[0].Err)
-			_ = s.db.UpdateJobStatus(context.Background(), id, "error", &msg, true)
-			return
-		}
-
-		_ = s.db.UpdateJobStatus(context.Background(), id, "idle", nil, true)
+// execRun is the goroutine body for a single job execution.
+func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{}, cancel context.CancelFunc) {
+	defer cancel()
+	defer func() {
+		s.mu.Lock()
+		delete(s.running, job.ID)
+		s.mu.Unlock()
 	}()
 
+	_ = s.db.UpdateJobStatus(ctx, job.ID, "running", nil, false)
+	s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "started"})
+
+	filesTotal := 0 // updated lazily on first progress call
+	result, runErr := s.engine.Run(ctx, engine.Config{
+		JobID:            job.ID,
+		SourcePath:       job.SourcePath,
+		DestinationPath:  job.DestinationPath,
+		BandwidthLimitKB: job.BandwidthLimitKB,
+		PauseCh:          pauseCh,
+		OnProgress: func(p engine.Progress) {
+			if filesTotal == 0 {
+				filesTotal = p.FilesTotal
+			}
+			eta := 0
+			if p.RateKBs > 0 && p.BytesDone > 0 && p.FilesTotal > p.FilesDone {
+				remaining := int64(p.FilesTotal-p.FilesDone) * (p.BytesDone / int64(p.FilesDone+1))
+				eta = int(float64(remaining) / 1024 / p.RateKBs)
+			}
+			s.hub.Broadcast(ws.Event{
+				JobID:      job.ID,
+				Event:      "progress",
+				FilesDone:  p.FilesDone,
+				FilesTotal: p.FilesTotal,
+				BytesDone:  p.BytesDone,
+				RateKBs:    p.RateKBs,
+				ETASecs:    eta,
+			})
+		},
+	})
+
+	if runErr != nil {
+		msg := runErr.Error()
+		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "error", &msg, true)
+		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
+		return
+	}
+
+	if result.Paused {
+		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "paused", nil, false)
+		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "paused"})
+		return
+	}
+
+	if len(result.Errors) > 0 {
+		msg := fmt.Sprintf("%d file(s) failed: %v", len(result.Errors), result.Errors[0].Err)
+		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "error", &msg, true)
+		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
+		return
+	}
+
+	_ = s.db.UpdateJobStatus(context.Background(), job.ID, "idle", nil, true)
+	s.hub.Broadcast(ws.Event{
+		JobID:      job.ID,
+		Event:      "completed",
+		FilesDone:  result.FilesCopied + result.FilesSkipped,
+		FilesTotal: result.FilesCopied + result.FilesSkipped,
+	})
+}
+
+// registerTriggers sets up cron and/or watch triggers for j.
+func (s *Service) registerTriggers(j *db.Job) error {
+	if j.CronSchedule != "" {
+		entryID, err := s.scheduler.AddFunc(j.CronSchedule, func() {
+			if err := s.Run(context.Background(), j.ID); err != nil && !errors.Is(err, ErrAlreadyRunning) {
+				log.Printf("jobs: cron trigger for job %d failed: %v", j.ID, err)
+			}
+		})
+		if err != nil {
+			return fmt.Errorf("adding cron schedule: %w", err)
+		}
+		s.mu.Lock()
+		s.cronIDs[j.ID] = entryID
+		s.mu.Unlock()
+	}
+
+	if j.WatchEnabled && s.watcher != nil {
+		if err := s.watcher.Add(j.ID, j.SourcePath, func(jobID int64) {
+			if err := s.Run(context.Background(), jobID); err != nil && !errors.Is(err, ErrAlreadyRunning) {
+				log.Printf("jobs: watch trigger for job %d failed: %v", jobID, err)
+			}
+		}); err != nil {
+			return fmt.Errorf("adding watch: %w", err)
+		}
+	}
 	return nil
+}
+
+// deregisterTriggers removes cron and watch triggers for jobID.
+func (s *Service) deregisterTriggers(jobID int64) {
+	s.mu.Lock()
+	if entryID, ok := s.cronIDs[jobID]; ok {
+		s.scheduler.Remove(entryID)
+		delete(s.cronIDs, jobID)
+	}
+	s.mu.Unlock()
+
+	if s.watcher != nil {
+		s.watcher.Remove(jobID)
+	}
 }
 
 func validMode(mode string) bool {

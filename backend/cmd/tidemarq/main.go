@@ -14,6 +14,8 @@ import (
 	"github.com/tidemarq/tidemarq/internal/engine"
 	"github.com/tidemarq/tidemarq/internal/jobs"
 	"github.com/tidemarq/tidemarq/internal/manifest"
+	"github.com/tidemarq/tidemarq/internal/watch"
+	"github.com/tidemarq/tidemarq/internal/ws"
 	"github.com/tidemarq/tidemarq/migrations"
 )
 
@@ -52,11 +54,23 @@ func run(configPath string) error {
 		return fmt.Errorf("seeding admin: %w", err)
 	}
 
+	watcher, err := watch.New()
+	if err != nil {
+		return fmt.Errorf("creating file watcher: %w", err)
+	}
+
+	hub := ws.New()
 	authSvc := auth.NewService(cfg.Auth.JWTSecret, cfg.Auth.JWTTTL)
 	manifestStore := manifest.New(database)
 	syncEngine := engine.New(manifestStore)
-	jobsSvc := jobs.New(database, syncEngine)
-	srv := api.NewServer(cfg, database, authSvc, jobsSvc)
+	jobsSvc := jobs.New(database, syncEngine, hub, watcher)
+
+	if err := jobsSvc.Start(context.Background()); err != nil {
+		return fmt.Errorf("starting job service: %w", err)
+	}
+	defer jobsSvc.Stop()
+
+	srv := api.NewServer(cfg, database, authSvc, jobsSvc, hub)
 
 	log.Printf("tidemarq %s starting — https://localhost:%d", api.Version, cfg.Server.HTTPSPort)
 	return srv.Run()

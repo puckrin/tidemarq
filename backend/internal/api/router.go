@@ -19,9 +19,15 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/health", s.handleHealth)
 	r.Post("/api/v1/auth/login", s.handleLogin)
 
+	// WebSocket — authenticated via short-lived token in query param.
+	r.Get("/ws", s.handleWS)
+
 	// Authenticated endpoints.
 	r.Group(func(r chi.Router) {
 		r.Use(s.authSvc.Middleware)
+
+		// WS token issuance — any authenticated user.
+		r.Get("/api/v1/auth/ws-token", s.handleWSToken)
 
 		// Admin-only: user management.
 		r.Group(func(r chi.Router) {
@@ -34,19 +40,24 @@ func (s *Server) Routes() http.Handler {
 			r.Delete("/api/v1/users/{id}", s.handleDeleteUser)
 		})
 
-		// Job management: read access for all authenticated users; write for admin/operator.
+		// Job management: read access for all authenticated users.
 		r.Get("/api/v1/jobs", s.handleListJobs)
 		r.Get("/api/v1/jobs/{id}", s.handleGetJob)
 
+		// Job write access: admin and operator.
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireRole("admin", "operator"))
 
 			r.Post("/api/v1/jobs", s.handleCreateJob)
+			r.Put("/api/v1/jobs/{id}", s.handleUpdateJob)
+			r.Delete("/api/v1/jobs/{id}", s.handleDeleteJob)
 			r.Post("/api/v1/jobs/{id}/run", s.handleRunJob)
+			r.Post("/api/v1/jobs/{id}/pause", s.handlePauseJob)
+			r.Post("/api/v1/jobs/{id}/resume", s.handleResumeJob)
 		})
 	})
 
-	// Static frontend — serves frontend/dist in production; holding page otherwise.
+	// Static frontend.
 	r.Handle("/*", staticHandler(s.cfg.Server.StaticDir))
 
 	return r

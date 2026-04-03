@@ -16,13 +16,26 @@ import (
 	"github.com/tidemarq/tidemarq/internal/manifest"
 )
 
+// errMidFilePause is returned by syncFile when a pause fires during a file transfer.
+var errMidFilePause = errors.New("paused mid-file")
+
 // Config holds the parameters for a single sync run.
 type Config struct {
 	JobID            int64
 	SourcePath       string
 	DestinationPath  string
-	BandwidthLimitKB int64 // 0 = unlimited
-	Workers          int   // 0 = defaultWorkers
+	BandwidthLimitKB int64          // 0 = unlimited
+	Workers          int            // 0 = defaultWorkers
+	OnProgress       func(Progress) // called after each file is processed; may be nil
+	PauseCh          <-chan struct{} // closed or sent on to request a graceful pause
+}
+
+// Progress is emitted after each file is processed during a run.
+type Progress struct {
+	FilesDone  int
+	FilesTotal int
+	BytesDone  int64
+	RateKBs    float64 // transfer rate over the last interval
 }
 
 // Result summarises the outcome of a sync run.
@@ -30,6 +43,7 @@ type Result struct {
 	FilesCopied  int
 	FilesSkipped int
 	BytesCopied  int64
+	Paused       bool // true if the run was halted by a pause signal
 	Errors       []FileError
 }
 
@@ -63,42 +77,55 @@ func (e *Engine) Run(ctx context.Context, cfg Config) (*Result, error) {
 		workers = defaultWorkers
 	}
 
-	taskCh := make(chan FileInfo, len(files))
-	for _, fi := range files {
-		taskCh <- fi
-	}
-	close(taskCh)
-
+	total := len(files)
 	result := &Result{}
 	var mu sync.Mutex
-	var wg sync.WaitGroup
+	done := 0
+	var bytesDone int64
+	rateTracker := &rateTracker{start: time.Now()}
 
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for fi := range taskCh {
-				if ctx.Err() != nil {
-					return
-				}
-				copied, skipped, written, ferr := e.syncFile(ctx, cfg, fi)
-				mu.Lock()
-				if ferr != nil {
-					result.Errors = append(result.Errors, FileError{Path: fi.RelPath, Err: ferr})
-				} else {
-					result.FilesCopied += copied
-					result.FilesSkipped += skipped
-					result.BytesCopied += written
-				}
-				mu.Unlock()
+	for _, fi := range files {
+		// Check for pause before each file.
+		if cfg.PauseCh != nil {
+			select {
+			case <-cfg.PauseCh:
+				result.Paused = true
+				return result, nil
+			default:
 			}
-		}()
-	}
-	wg.Wait()
+		}
 
-	if ctx.Err() != nil {
-		return result, ctx.Err()
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+
+		copied, skipped, written, ferr := e.syncFile(ctx, cfg, fi)
+		if errors.Is(ferr, errMidFilePause) {
+			result.Paused = true
+			return result, nil
+		}
+		mu.Lock()
+		if ferr != nil {
+			result.Errors = append(result.Errors, FileError{Path: fi.RelPath, Err: ferr})
+		} else {
+			result.FilesCopied += copied
+			result.FilesSkipped += skipped
+			result.BytesCopied += written
+		}
+		done++
+		bytesDone += written
+		mu.Unlock()
+
+		if cfg.OnProgress != nil {
+			cfg.OnProgress(Progress{
+				FilesDone:  done,
+				FilesTotal: total,
+				BytesDone:  bytesDone,
+				RateKBs:    rateTracker.rate(bytesDone),
+			})
+		}
 	}
+
 	return result, nil
 }
 
@@ -115,19 +142,27 @@ func (e *Engine) syncFile(ctx context.Context, cfg Config, fi FileInfo) (int, in
 		return 0, 0, 0, fmt.Errorf("reading manifest: %w", err)
 	}
 
-	// Skip when SHA-256 matches the last recorded sync.
-	if entry != nil && entry.SHA256 == srcHash {
-		return 0, 1, 0, nil
-	}
-
 	destPath := filepath.Join(cfg.DestinationPath, filepath.FromSlash(fi.RelPath))
+
+	// Skip only when SHA-256 matches the last recorded sync AND the destination
+	// file still exists. If the destination was deleted manually, re-copy it.
+	if entry != nil && entry.SHA256 == srcHash {
+		if _, err := os.Stat(destPath); err == nil {
+			return 0, 1, 0, nil
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 		return 0, 0, 0, fmt.Errorf("creating destination directory: %w", err)
 	}
 
-	written, err := copyFile(fi.AbsPath, destPath, cfg.BandwidthLimitKB)
+	written, paused, err := copyFile(fi.AbsPath, destPath, cfg.BandwidthLimitKB, cfg.PauseCh)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("copying file: %w", err)
+	}
+	if paused {
+		// Partial file in destination — remove it so the next run starts fresh.
+		os.Remove(destPath) //nolint:errcheck
+		return 0, 0, 0, errMidFilePause
 	}
 
 	// Verify integrity of the copy.
@@ -178,21 +213,41 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// copyFile copies src to dst, applying an optional bandwidth limit (KB/s).
-// Returns the number of bytes written.
-func copyFile(src, dst string, bwLimitKBs int64) (int64, error) {
+// copyFile copies src to dst, applying an optional bandwidth limit (KB/s) and
+// honouring pauseCh mid-transfer. Returns bytes written and whether the copy
+// was interrupted by a pause signal.
+func copyFile(src, dst string, bwLimitKBs int64, pauseCh <-chan struct{}) (int64, bool, error) {
 	srcFile, err := os.Open(src)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	defer srcFile.Close()
 
 	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	defer dstFile.Close()
 
-	r := newThrottledReader(srcFile, bwLimitKBs)
-	return io.Copy(dstFile, r)
+	tr := newThrottledReader(srcFile, bwLimitKBs, pauseCh)
+	written, err := io.Copy(dstFile, tr)
+
+	// Check if the stop was caused by a pause rather than a real error.
+	if tr, ok := tr.(*throttledReader); ok && tr.paused {
+		return written, true, nil
+	}
+	return written, false, err
+}
+
+// rateTracker computes a smoothed transfer rate.
+type rateTracker struct {
+	start time.Time
+}
+
+func (rt *rateTracker) rate(bytesDone int64) float64 {
+	elapsed := time.Since(rt.start).Seconds()
+	if elapsed < 0.001 {
+		return 0
+	}
+	return float64(bytesDone) / 1024 / elapsed
 }

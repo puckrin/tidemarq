@@ -19,6 +19,8 @@ import (
 	"github.com/tidemarq/tidemarq/internal/engine"
 	"github.com/tidemarq/tidemarq/internal/jobs"
 	"github.com/tidemarq/tidemarq/internal/manifest"
+	"github.com/tidemarq/tidemarq/internal/watch"
+	"github.com/tidemarq/tidemarq/internal/ws"
 	"github.com/tidemarq/tidemarq/migrations"
 )
 
@@ -61,8 +63,14 @@ func newTestServer(t *testing.T) (*httptest.Server, string) {
 	authSvc := auth.NewService(cfg.Auth.JWTSecret, cfg.Auth.JWTTTL)
 	manifestStore := manifest.New(database)
 	syncEngine := engine.New(manifestStore)
-	jobsSvc := jobs.New(database, syncEngine)
-	srv := api.NewServer(cfg, database, authSvc, jobsSvc)
+	hub := ws.New()
+	watcher, err := watch.New()
+	if err != nil {
+		t.Fatalf("watch.New: %v", err)
+	}
+	t.Cleanup(watcher.Close)
+	jobsSvc := jobs.New(database, syncEngine, hub, watcher)
+	srv := api.NewServer(cfg, database, authSvc, jobsSvc, hub)
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 

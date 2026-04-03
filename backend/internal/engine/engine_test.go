@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -199,6 +200,106 @@ func TestEngine_PreservesMetadata(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0600 {
 		t.Errorf("permissions: got %o, want %o", info.Mode().Perm(), 0600)
+	}
+}
+
+func TestEngine_PauseStopsAfterCurrentFile(t *testing.T) {
+	eng, jobID, src, dst := testEnv(t)
+
+	// Create several files.
+	for i := 0; i < 5; i++ {
+		writeFile(t, filepath.Join(src, fmt.Sprintf("file%d.txt", i)), fmt.Sprintf("content %d", i))
+	}
+
+	// Signal pause immediately so it fires on the first check.
+	pauseCh := make(chan struct{})
+	close(pauseCh)
+
+	result, err := eng.Run(context.Background(), engine.Config{
+		JobID:           jobID,
+		SourcePath:      src,
+		DestinationPath: dst,
+		PauseCh:         pauseCh,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !result.Paused {
+		t.Error("expected Result.Paused = true")
+	}
+}
+
+func TestEngine_ResumeAfterPause(t *testing.T) {
+	eng, jobID, src, dst := testEnv(t)
+
+	writeFile(t, filepath.Join(src, "a.txt"), "aaa")
+	writeFile(t, filepath.Join(src, "b.txt"), "bbb")
+
+	cfg := engine.Config{JobID: jobID, SourcePath: src, DestinationPath: dst}
+
+	// Normal run — copies both files.
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Modify both files.
+	writeFile(t, filepath.Join(src, "a.txt"), "aaa-modified")
+	writeFile(t, filepath.Join(src, "b.txt"), "bbb-modified")
+
+	// Pause immediately on first file.
+	pauseCh := make(chan struct{})
+	close(pauseCh)
+	cfg.PauseCh = pauseCh
+
+	r1, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("paused Run: %v", err)
+	}
+	if !r1.Paused {
+		t.Fatal("expected paused result")
+	}
+
+	// Resume — no pause channel; should pick up remaining file.
+	cfg.PauseCh = nil
+	r2, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("resume Run: %v", err)
+	}
+	if r2.Paused {
+		t.Error("expected run to complete without pausing")
+	}
+	// Together the two runs should have copied both modified files.
+	if r1.FilesCopied+r2.FilesCopied != 2 {
+		t.Errorf("total FilesCopied: got %d, want 2", r1.FilesCopied+r2.FilesCopied)
+	}
+}
+
+func TestEngine_RecopiesIfDestinationDeleted(t *testing.T) {
+	eng, jobID, src, dst := testEnv(t)
+
+	writeFile(t, filepath.Join(src, "file.txt"), "data")
+	cfg := engine.Config{JobID: jobID, SourcePath: src, DestinationPath: dst}
+
+	// First run — copies the file.
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Delete the destination file manually.
+	if err := os.Remove(filepath.Join(dst, "file.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second run — source unchanged, but destination missing; should re-copy.
+	result, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if result.FilesCopied != 1 {
+		t.Errorf("FilesCopied: got %d, want 1", result.FilesCopied)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "file.txt")); os.IsNotExist(err) {
+		t.Error("destination file still missing after second run")
 	}
 }
 

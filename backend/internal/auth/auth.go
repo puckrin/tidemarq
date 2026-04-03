@@ -47,6 +47,22 @@ func (s *Service) IssueToken(userID int64, username, role string) (string, error
 	return token.SignedString(s.secret)
 }
 
+// IssueTokenTTL mints a signed JWT with an explicit TTL, overriding the service default.
+func (s *Service) IssueTokenTTL(userID int64, username, role string, ttl time.Duration) (string, error) {
+	now := time.Now()
+	claims := Claims{
+		UserID:   userID,
+		Username: username,
+		Role:     role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(s.secret)
+}
+
 // ValidateToken parses and validates a JWT string, returning its claims.
 func (s *Service) ValidateToken(tokenStr string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (interface{}, error) {
