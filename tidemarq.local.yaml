@@ -1,0 +1,20 @@
+server:
+  http_port: 8080
+  https_port: 8443
+  data_dir: F:\Projects\tidemarq\dev-data
+  static_dir: F:\Projects\tidemarq\frontend\dist
+
+database:
+  path: F:\Projects\tidemarq\dev-data\tidemarq.db
+
+tls:
+  cert_file: F:\Projects\tidemarq\dev-data\certs\server.crt
+  key_file: F:\Projects\tidemarq\dev-data\certs\server.key
+
+auth:
+  jwt_secret: "dev-secret-do-not-use-in-production"
+  jwt_ttl: 24h
+
+admin:
+  username: admin
+  password: admin

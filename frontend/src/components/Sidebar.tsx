@@ -23,17 +23,17 @@ interface NavItem {
 }
 
 const overviewItems: NavItem[] = [
-  { view: 'dashboard', label: 'Dashboard',  icon: <LayoutDashboard size={16} /> },
-  { view: 'jobs',      label: 'Sync Jobs',  icon: <RefreshCw size={16} /> },
+  { view: 'dashboard', label: 'Dashboard',  icon: <LayoutDashboard size={18} /> },
+  { view: 'jobs',      label: 'Sync Jobs',  icon: <RefreshCw size={18} /> },
 ]
 
 const manageItems: NavItem[] = [
-  { view: 'conflicts', label: 'Conflicts',  icon: <GitMerge size={16} /> },
-  { view: 'audit',     label: 'Audit Log',  icon: <ScrollText size={16} /> },
+  { view: 'conflicts', label: 'Conflicts',  icon: <GitMerge size={18} /> },
+  { view: 'audit',     label: 'Audit Log',  icon: <ScrollText size={18} /> },
 ]
 
 const systemItems: NavItem[] = [
-  { view: 'settings',  label: 'Settings',   icon: <Settings size={16} /> },
+  { view: 'settings',  label: 'Settings',   icon: <Settings size={18} /> },
 ]
 
 import React from 'react'
@@ -97,7 +97,7 @@ export function Sidebar({ current, onNav, conflictCount }: Props) {
             <div className="user-role">{user?.role ?? ''}</div>
           </div>
           <button className="icon-btn mla" onClick={logout} title="Sign out">
-            <LogOut size={15} />
+            <LogOut size={17} />
           </button>
         </div>
       </div>
