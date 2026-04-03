@@ -57,6 +57,14 @@ func (db *DB) UpsertManifestEntry(ctx context.Context, e *ManifestEntry) error {
 	return err
 }
 
+// DeleteManifestEntry removes the manifest entry for the given job and path.
+func (db *DB) DeleteManifestEntry(ctx context.Context, jobID int64, relPath string) error {
+	_, err := db.ExecContext(ctx,
+		`DELETE FROM manifest_entries WHERE job_id = ? AND rel_path = ?`, jobID, relPath,
+	)
+	return err
+}
+
 // ListManifestEntries returns all manifest entries for jobID ordered by path.
 func (db *DB) ListManifestEntries(ctx context.Context, jobID int64) ([]*ManifestEntry, error) {
 	rows, err := db.QueryContext(ctx,

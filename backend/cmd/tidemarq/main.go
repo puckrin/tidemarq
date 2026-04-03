@@ -6,14 +6,17 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/tidemarq/tidemarq/internal/api"
 	"github.com/tidemarq/tidemarq/internal/auth"
 	"github.com/tidemarq/tidemarq/internal/config"
+	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/db"
 	"github.com/tidemarq/tidemarq/internal/engine"
 	"github.com/tidemarq/tidemarq/internal/jobs"
 	"github.com/tidemarq/tidemarq/internal/manifest"
+	"github.com/tidemarq/tidemarq/internal/versions"
 	"github.com/tidemarq/tidemarq/internal/watch"
 	"github.com/tidemarq/tidemarq/internal/ws"
 	"github.com/tidemarq/tidemarq/migrations"
@@ -54,6 +57,11 @@ func run(configPath string) error {
 		return fmt.Errorf("seeding admin: %w", err)
 	}
 
+	// Derive storage directories from the database path.
+	dataDir := filepath.Dir(cfg.Database.Path)
+	versionsDir := filepath.Join(dataDir, "versions")
+	quarantineDir := filepath.Join(dataDir, "quarantine")
+
 	watcher, err := watch.New()
 	if err != nil {
 		return fmt.Errorf("creating file watcher: %w", err)
@@ -63,14 +71,16 @@ func run(configPath string) error {
 	authSvc := auth.NewService(cfg.Auth.JWTSecret, cfg.Auth.JWTTTL)
 	manifestStore := manifest.New(database)
 	syncEngine := engine.New(manifestStore)
-	jobsSvc := jobs.New(database, syncEngine, hub, watcher)
+	conflictsSvc := conflicts.New(database)
+	versionsSvc := versions.New(database, versionsDir, quarantineDir, 30)
+	jobsSvc := jobs.New(database, syncEngine, hub, watcher, versionsSvc, conflictsSvc)
 
 	if err := jobsSvc.Start(context.Background()); err != nil {
 		return fmt.Errorf("starting job service: %w", err)
 	}
 	defer jobsSvc.Stop()
 
-	srv := api.NewServer(cfg, database, authSvc, jobsSvc, hub)
+	srv := api.NewServer(cfg, database, authSvc, jobsSvc, hub, conflictsSvc, versionsSvc)
 
 	log.Printf("tidemarq %s starting — https://localhost:%d", api.Version, cfg.Server.HTTPSPort)
 	return srv.Run()

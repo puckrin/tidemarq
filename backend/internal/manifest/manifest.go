@@ -68,6 +68,11 @@ func (s *Store) Put(ctx context.Context, e *Entry) error {
 	})
 }
 
+// Delete removes the manifest entry for relPath within jobID, if it exists.
+func (s *Store) Delete(ctx context.Context, jobID int64, relPath string) error {
+	return s.db.DeleteManifestEntry(ctx, jobID, relPath)
+}
+
 // List returns all manifest entries for jobID ordered by path.
 func (s *Store) List(ctx context.Context, jobID int64) ([]*Entry, error) {
 	dbEntries, err := s.db.ListManifestEntries(ctx, jobID)

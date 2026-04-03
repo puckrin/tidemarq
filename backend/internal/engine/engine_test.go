@@ -6,11 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/db"
 	"github.com/tidemarq/tidemarq/internal/engine"
 	"github.com/tidemarq/tidemarq/internal/manifest"
+	"github.com/tidemarq/tidemarq/internal/versions"
 	"github.com/tidemarq/tidemarq/migrations"
 )
 
@@ -300,6 +304,318 @@ func TestEngine_RecopiesIfDestinationDeleted(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, "file.txt")); os.IsNotExist(err) {
 		t.Error("destination file still missing after second run")
+	}
+}
+
+// testEnvFull extends testEnv with versions and conflicts services for mode tests.
+func testEnvFull(t *testing.T) (eng *engine.Engine, jobID int64, src, dst string, vSvc *versions.Service, cSvc *conflicts.Service) {
+	t.Helper()
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	if err := d.Migrate(migrations.FS); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	src = t.TempDir()
+	dst = t.TempDir()
+
+	job, err := d.CreateJob(context.Background(), db.CreateJobParams{
+		Name:            "test",
+		SourcePath:      src,
+		DestinationPath: dst,
+		Mode:            "two-way",
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	store := manifest.New(d)
+	eng = engine.New(store)
+	vSvc = versions.New(d, t.TempDir(), t.TempDir(), 30)
+	cSvc = conflicts.New(d)
+	return eng, job.ID, src, dst, vSvc, cSvc
+}
+
+// ---------------------------------------------------------------------------
+// Two-way sync tests
+// ---------------------------------------------------------------------------
+
+// TestEngine_TwoWay_PropagatesDestChange verifies that a change made on the
+// destination side is propagated back to the source on the next run.
+func TestEngine_TwoWay_PropagatesDestChange(t *testing.T) {
+	eng, jobID, src, dst, vSvc, cSvc := testEnvFull(t)
+
+	writeFile(t, filepath.Join(src, "file.txt"), "original")
+
+	cfg := engine.Config{
+		JobID: jobID, Mode: "two-way",
+		SourcePath: src, DestinationPath: dst,
+		VersionsSvc: vSvc, ConflictsSvc: cSvc,
+	}
+
+	// First run — syncs source → dest.
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dst, "file.txt"))
+	if string(got) != "original" {
+		t.Fatalf("dest content after first run: %q", got)
+	}
+
+	// Modify the destination (simulating a remote edit).
+	writeFile(t, filepath.Join(dst, "file.txt"), "edited on dest")
+
+	// Second run — should propagate dest change back to source.
+	result, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("errors: %v", result.Errors)
+	}
+	if result.FilesCopied != 1 {
+		t.Errorf("FilesCopied: got %d, want 1", result.FilesCopied)
+	}
+
+	got, _ = os.ReadFile(filepath.Join(src, "file.txt"))
+	if string(got) != "edited on dest" {
+		t.Errorf("source content after two-way sync: got %q, want %q", got, "edited on dest")
+	}
+}
+
+// TestEngine_TwoWay_Idempotent verifies that a second run with no changes
+// produces zero copies.
+func TestEngine_TwoWay_Idempotent(t *testing.T) {
+	eng, jobID, src, dst, vSvc, cSvc := testEnvFull(t)
+
+	writeFile(t, filepath.Join(src, "file.txt"), "stable")
+
+	cfg := engine.Config{
+		JobID: jobID, Mode: "two-way",
+		SourcePath: src, DestinationPath: dst,
+		VersionsSvc: vSvc, ConflictsSvc: cSvc,
+	}
+
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	second, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if second.FilesCopied != 0 {
+		t.Errorf("idempotency: FilesCopied = %d on second run, want 0", second.FilesCopied)
+	}
+}
+
+// TestEngine_TwoWay_ConflictRenamesDest verifies that when both sides change
+// the same file, the ask-user strategy renames the dest copy with a
+// .conflict.<timestamp> suffix and copies source to dest.
+func TestEngine_TwoWay_ConflictRenamesDest(t *testing.T) {
+	eng, jobID, src, dst, vSvc, cSvc := testEnvFull(t)
+
+	writeFile(t, filepath.Join(src, "file.txt"), "original")
+
+	cfg := engine.Config{
+		JobID: jobID, Mode: "two-way", ConflictStrategy: "ask-user",
+		SourcePath: src, DestinationPath: dst,
+		VersionsSvc: vSvc, ConflictsSvc: cSvc,
+	}
+
+	// First run — establishes manifest baseline.
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Modify both sides independently.
+	writeFile(t, filepath.Join(src, "file.txt"), "source version")
+	writeFile(t, filepath.Join(dst, "file.txt"), "dest version")
+
+	// Second run — should detect conflict and rename dest.
+	result, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("conflict Run: %v", err)
+	}
+	if result.Conflicts != 1 {
+		t.Errorf("Conflicts: got %d, want 1", result.Conflicts)
+	}
+
+	// Destination should now contain the source version.
+	got, _ := os.ReadFile(filepath.Join(dst, "file.txt"))
+	if string(got) != "source version" {
+		t.Errorf("dest content: got %q, want %q", got, "source version")
+	}
+
+	// A .conflict.* file should exist in dest.
+	entries, _ := os.ReadDir(dst)
+	found := false
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".conflict.") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected a .conflict.<timestamp> file in dest directory")
+	}
+}
+
+// TestEngine_TwoWay_ConflictSourceWins verifies that source-wins auto-resolves
+// without creating a conflict file.
+func TestEngine_TwoWay_ConflictSourceWins(t *testing.T) {
+	eng, jobID, src, dst, vSvc, cSvc := testEnvFull(t)
+
+	writeFile(t, filepath.Join(src, "file.txt"), "original")
+
+	cfg := engine.Config{
+		JobID: jobID, Mode: "two-way", ConflictStrategy: "source-wins",
+		SourcePath: src, DestinationPath: dst,
+		VersionsSvc: vSvc, ConflictsSvc: cSvc,
+	}
+
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	writeFile(t, filepath.Join(src, "file.txt"), "source version")
+	writeFile(t, filepath.Join(dst, "file.txt"), "dest version")
+
+	result, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("conflict Run: %v", err)
+	}
+	if result.Conflicts != 1 {
+		t.Errorf("Conflicts: got %d, want 1", result.Conflicts)
+	}
+
+	// Source should win — dest gets source content; no .conflict file created.
+	got, _ := os.ReadFile(filepath.Join(dst, "file.txt"))
+	if string(got) != "source version" {
+		t.Errorf("dest content: got %q, want %q", got, "source version")
+	}
+
+	entries, _ := os.ReadDir(dst)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".conflict.") {
+			t.Errorf("unexpected .conflict file: %s", e.Name())
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Mirror mode tests
+// ---------------------------------------------------------------------------
+
+// TestEngine_Mirror_QuarantinesDeletedFile verifies that a file deleted from
+// source is moved to quarantine (not hard-deleted) in dest.
+func TestEngine_Mirror_QuarantinesDeletedFile(t *testing.T) {
+	eng, jobID, src, dst, vSvc, _ := testEnvFull(t)
+
+	writeFile(t, filepath.Join(src, "keep.txt"), "keep")
+	writeFile(t, filepath.Join(src, "remove.txt"), "remove")
+
+	cfg := engine.Config{
+		JobID: jobID, Mode: "one-way-mirror",
+		SourcePath: src, DestinationPath: dst,
+		VersionsSvc: vSvc,
+	}
+
+	// First run — syncs both files to dest.
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "remove.txt")); os.IsNotExist(err) {
+		t.Fatal("remove.txt should exist in dest after first run")
+	}
+
+	// Delete remove.txt from source.
+	if err := os.Remove(filepath.Join(src, "remove.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second run — remove.txt should be quarantined from dest.
+	result, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if result.Quarantined != 1 {
+		t.Errorf("Quarantined: got %d, want 1", result.Quarantined)
+	}
+
+	// File should be gone from dest.
+	if _, err := os.Stat(filepath.Join(dst, "remove.txt")); !os.IsNotExist(err) {
+		t.Error("remove.txt should have been quarantined from dest but still exists")
+	}
+
+	// keep.txt must remain untouched.
+	if _, err := os.Stat(filepath.Join(dst, "keep.txt")); os.IsNotExist(err) {
+		t.Error("keep.txt should still exist in dest")
+	}
+}
+
+// TestEngine_Mirror_Idempotent verifies that a second mirror run with no
+// source changes produces zero copies and zero quarantine events.
+func TestEngine_Mirror_Idempotent(t *testing.T) {
+	eng, jobID, src, dst, vSvc, _ := testEnvFull(t)
+
+	writeFile(t, filepath.Join(src, "file.txt"), "data")
+
+	cfg := engine.Config{
+		JobID: jobID, Mode: "one-way-mirror",
+		SourcePath: src, DestinationPath: dst,
+		VersionsSvc: vSvc,
+	}
+
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	second, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if second.FilesCopied != 0 {
+		t.Errorf("idempotency: FilesCopied = %d, want 0", second.FilesCopied)
+	}
+	if second.Quarantined != 0 {
+		t.Errorf("idempotency: Quarantined = %d, want 0", second.Quarantined)
+	}
+}
+
+// TestEngine_BandwidthLimit verifies that a non-zero bandwidth limit slows
+// the transfer to at most 2× the configured rate (generous bound to avoid
+// flakiness, while still catching an unthrottled transfer).
+func TestEngine_BandwidthLimit(t *testing.T) {
+	eng, jobID, src, dst := testEnv(t)
+
+	// 512 KB file, limited to 256 KB/s → expect at least ~1s transfer.
+	size := 512 * 1024
+	data := make([]byte, size)
+	writeFile(t, filepath.Join(src, "big.bin"), string(data))
+
+	start := time.Now()
+	result, err := eng.Run(context.Background(), engine.Config{
+		JobID:            jobID,
+		SourcePath:       src,
+		DestinationPath:  dst,
+		BandwidthLimitKB: 256,
+	})
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("errors: %v", result.Errors)
+	}
+	// At 256 KB/s, 512 KB should take ≥ 1 second.
+	if elapsed < time.Second {
+		t.Errorf("transfer completed in %v — bandwidth limit does not appear to be enforced", elapsed)
 	}
 }
 

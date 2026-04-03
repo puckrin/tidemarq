@@ -16,6 +16,7 @@ type Job struct {
 	Mode             string     `json:"mode"`
 	Status           string     `json:"status"`
 	BandwidthLimitKB int64      `json:"bandwidth_limit_kb"`
+	ConflictStrategy string     `json:"conflict_strategy"`
 	CronSchedule     string     `json:"cron_schedule"`
 	WatchEnabled     bool       `json:"watch_enabled"`
 	LastRunAt        *time.Time `json:"last_run_at,omitempty"`
@@ -31,6 +32,7 @@ type CreateJobParams struct {
 	DestinationPath  string
 	Mode             string
 	BandwidthLimitKB int64
+	ConflictStrategy string
 	CronSchedule     string
 	WatchEnabled     bool
 }
@@ -42,16 +44,20 @@ type UpdateJobParams struct {
 	DestinationPath  string
 	Mode             string
 	BandwidthLimitKB int64
+	ConflictStrategy string
 	CronSchedule     string
 	WatchEnabled     bool
 }
 
 // CreateJob inserts a new job and returns the created record.
 func (db *DB) CreateJob(ctx context.Context, p CreateJobParams) (*Job, error) {
+	if p.ConflictStrategy == "" {
+		p.ConflictStrategy = "ask-user"
+	}
 	res, err := db.ExecContext(ctx,
-		`INSERT INTO jobs (name, source_path, destination_path, mode, bandwidth_limit_kb, cron_schedule, watch_enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, p.SourcePath, p.DestinationPath, p.Mode, p.BandwidthLimitKB, p.CronSchedule, p.WatchEnabled,
+		`INSERT INTO jobs (name, source_path, destination_path, mode, bandwidth_limit_kb, conflict_strategy, cron_schedule, watch_enabled)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.SourcePath, p.DestinationPath, p.Mode, p.BandwidthLimitKB, p.ConflictStrategy, p.CronSchedule, p.WatchEnabled,
 	)
 	if err != nil {
 		return nil, err
@@ -67,7 +73,7 @@ func (db *DB) CreateJob(ctx context.Context, p CreateJobParams) (*Job, error) {
 func (db *DB) GetJobByID(ctx context.Context, id int64) (*Job, error) {
 	row := db.QueryRowContext(ctx,
 		`SELECT id, name, source_path, destination_path, mode, status, bandwidth_limit_kb,
-		        cron_schedule, watch_enabled, last_run_at, last_error, created_at, updated_at
+		        conflict_strategy, cron_schedule, watch_enabled, last_run_at, last_error, created_at, updated_at
 		 FROM jobs WHERE id = ?`, id,
 	)
 	return scanJob(row)
@@ -77,7 +83,7 @@ func (db *DB) GetJobByID(ctx context.Context, id int64) (*Job, error) {
 func (db *DB) ListJobs(ctx context.Context) ([]*Job, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT id, name, source_path, destination_path, mode, status, bandwidth_limit_kb,
-		        cron_schedule, watch_enabled, last_run_at, last_error, created_at, updated_at
+		        conflict_strategy, cron_schedule, watch_enabled, last_run_at, last_error, created_at, updated_at
 		 FROM jobs ORDER BY name`,
 	)
 	if err != nil {
@@ -98,13 +104,16 @@ func (db *DB) ListJobs(ctx context.Context) ([]*Job, error) {
 
 // UpdateJob applies p to the job with the given ID.
 func (db *DB) UpdateJob(ctx context.Context, id int64, p UpdateJobParams) (*Job, error) {
+	if p.ConflictStrategy == "" {
+		p.ConflictStrategy = "ask-user"
+	}
 	_, err := db.ExecContext(ctx,
 		`UPDATE jobs SET name = ?, source_path = ?, destination_path = ?, mode = ?,
-		                 bandwidth_limit_kb = ?, cron_schedule = ?, watch_enabled = ?,
+		                 bandwidth_limit_kb = ?, conflict_strategy = ?, cron_schedule = ?, watch_enabled = ?,
 		                 updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ?`,
 		p.Name, p.SourcePath, p.DestinationPath, p.Mode,
-		p.BandwidthLimitKB, p.CronSchedule, p.WatchEnabled, id,
+		p.BandwidthLimitKB, p.ConflictStrategy, p.CronSchedule, p.WatchEnabled, id,
 	)
 	if err != nil {
 		return nil, err
@@ -151,7 +160,7 @@ func scanJob(row *sql.Row) (*Job, error) {
 	var watchEnabled int
 	err := row.Scan(
 		&j.ID, &j.Name, &j.SourcePath, &j.DestinationPath, &j.Mode, &j.Status,
-		&j.BandwidthLimitKB, &j.CronSchedule, &watchEnabled,
+		&j.BandwidthLimitKB, &j.ConflictStrategy, &j.CronSchedule, &watchEnabled,
 		&j.LastRunAt, &j.LastError, &j.CreatedAt, &j.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -169,7 +178,7 @@ func scanJobRows(rows *sql.Rows) (*Job, error) {
 	var watchEnabled int
 	err := rows.Scan(
 		&j.ID, &j.Name, &j.SourcePath, &j.DestinationPath, &j.Mode, &j.Status,
-		&j.BandwidthLimitKB, &j.CronSchedule, &watchEnabled,
+		&j.BandwidthLimitKB, &j.ConflictStrategy, &j.CronSchedule, &watchEnabled,
 		&j.LastRunAt, &j.LastError, &j.CreatedAt, &j.UpdatedAt,
 	)
 	if err != nil {

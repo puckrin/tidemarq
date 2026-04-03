@@ -17,6 +17,7 @@ type createJobRequest struct {
 	DestinationPath  string `json:"destination_path"`
 	Mode             string `json:"mode"`
 	BandwidthLimitKB int64  `json:"bandwidth_limit_kb"`
+	ConflictStrategy string `json:"conflict_strategy"`
 	CronSchedule     string `json:"cron_schedule"`
 	WatchEnabled     bool   `json:"watch_enabled"`
 }
@@ -27,6 +28,7 @@ type updateJobRequest struct {
 	DestinationPath  string `json:"destination_path"`
 	Mode             string `json:"mode"`
 	BandwidthLimitKB int64  `json:"bandwidth_limit_kb"`
+	ConflictStrategy string `json:"conflict_strategy"`
 	CronSchedule     string `json:"cron_schedule"`
 	WatchEnabled     bool   `json:"watch_enabled"`
 }
@@ -56,6 +58,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		DestinationPath:  req.DestinationPath,
 		Mode:             req.Mode,
 		BandwidthLimitKB: req.BandwidthLimitKB,
+		ConflictStrategy: req.ConflictStrategy,
 		CronSchedule:     req.CronSchedule,
 		WatchEnabled:     req.WatchEnabled,
 	})
@@ -106,6 +109,7 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		DestinationPath:  req.DestinationPath,
 		Mode:             req.Mode,
 		BandwidthLimitKB: req.BandwidthLimitKB,
+		ConflictStrategy: req.ConflictStrategy,
 		CronSchedule:     req.CronSchedule,
 		WatchEnabled:     req.WatchEnabled,
 	})

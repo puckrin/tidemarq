@@ -10,8 +10,10 @@ import (
 	"sync"
 
 	"github.com/robfig/cron/v3"
+	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/db"
 	"github.com/tidemarq/tidemarq/internal/engine"
+	"github.com/tidemarq/tidemarq/internal/versions"
 	"github.com/tidemarq/tidemarq/internal/watch"
 	"github.com/tidemarq/tidemarq/internal/ws"
 )
@@ -30,6 +32,7 @@ type CreateParams struct {
 	DestinationPath  string
 	Mode             string
 	BandwidthLimitKB int64
+	ConflictStrategy string
 	CronSchedule     string
 	WatchEnabled     bool
 }
@@ -41,6 +44,7 @@ type UpdateParams struct {
 	DestinationPath  string
 	Mode             string
 	BandwidthLimitKB int64
+	ConflictStrategy string
 	CronSchedule     string
 	WatchEnabled     bool
 }
@@ -53,10 +57,12 @@ type runContext struct {
 
 // Service manages job CRUD, scheduling, watching, and execution.
 type Service struct {
-	db      *db.DB
-	engine  *engine.Engine
-	hub     *ws.Hub
-	watcher *watch.Manager
+	db           *db.DB
+	engine       *engine.Engine
+	hub          *ws.Hub
+	watcher      *watch.Manager
+	versionsSvc  *versions.Service
+	conflictsSvc *conflicts.Service
 
 	scheduler *cron.Cron
 
@@ -66,15 +72,17 @@ type Service struct {
 }
 
 // New creates a Service. Call Start to activate scheduling and watching.
-func New(database *db.DB, eng *engine.Engine, hub *ws.Hub, watcher *watch.Manager) *Service {
+func New(database *db.DB, eng *engine.Engine, hub *ws.Hub, watcher *watch.Manager, versionsSvc *versions.Service, conflictsSvc *conflicts.Service) *Service {
 	return &Service{
-		db:      database,
-		engine:  eng,
-		hub:     hub,
-		watcher: watcher,
-		scheduler: cron.New(),
-		running:  make(map[int64]*runContext),
-		cronIDs:  make(map[int64]cron.EntryID),
+		db:           database,
+		engine:       eng,
+		hub:          hub,
+		watcher:      watcher,
+		versionsSvc:  versionsSvc,
+		conflictsSvc: conflictsSvc,
+		scheduler:    cron.New(),
+		running:      make(map[int64]*runContext),
+		cronIDs:      make(map[int64]cron.EntryID),
 	}
 }
 
@@ -125,6 +133,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*db.Job, error) {
 		DestinationPath:  p.DestinationPath,
 		Mode:             p.Mode,
 		BandwidthLimitKB: p.BandwidthLimitKB,
+		ConflictStrategy: p.ConflictStrategy,
 		CronSchedule:     p.CronSchedule,
 		WatchEnabled:     p.WatchEnabled,
 	})
@@ -171,6 +180,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (*db.Job
 		DestinationPath:  p.DestinationPath,
 		Mode:             p.Mode,
 		BandwidthLimitKB: p.BandwidthLimitKB,
+		ConflictStrategy: p.ConflictStrategy,
 		CronSchedule:     p.CronSchedule,
 		WatchEnabled:     p.WatchEnabled,
 	})
@@ -258,10 +268,14 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 	filesTotal := 0 // updated lazily on first progress call
 	result, runErr := s.engine.Run(ctx, engine.Config{
 		JobID:            job.ID,
+		Mode:             job.Mode,
+		ConflictStrategy: job.ConflictStrategy,
 		SourcePath:       job.SourcePath,
 		DestinationPath:  job.DestinationPath,
 		BandwidthLimitKB: job.BandwidthLimitKB,
 		PauseCh:          pauseCh,
+		VersionsSvc:      s.versionsSvc,
+		ConflictsSvc:     s.conflictsSvc,
 		OnProgress: func(p engine.Progress) {
 			if filesTotal == 0 {
 				filesTotal = p.FilesTotal
