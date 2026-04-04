@@ -137,6 +137,11 @@ td { padding: 10px 12px; vertical-align: middle; }
 .pf-grass { background: var(--grass); }
 .pf-amber { background: var(--amber); }
 .pf-coral { background: var(--coral); }
+[data-theme="dark"] .pbar    { background: rgba(163, 221, 230, 0.22); }
+[data-theme="dark"] .pf-teal  { background: var(--light-teal); }
+[data-theme="dark"] .pf-grass { background: var(--grass-light); }
+[data-theme="dark"] .pf-amber { background: var(--amber-light); }
+[data-theme="dark"] .pf-coral { background: var(--coral-light); }
 
 /* ── ACTIVITY FEED ───────────────────────────────────── */
 .act-item { display: flex; align-items: flex-start; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--border); }
