@@ -79,7 +79,7 @@ func run(configPath string) error {
 	mountsSvc := mounts.New(database, cfg.Auth.JWTSecret)
 	notifSvc := notifications.New(database, cfg.Auth.JWTSecret)
 	auditSvc := audit.New(database)
-	jobsSvc := jobs.New(database, syncEngine, hub, watcher, versionsSvc, conflictsSvc, mountsSvc)
+	jobsSvc := jobs.New(database, syncEngine, hub, watcher, versionsSvc, conflictsSvc, mountsSvc, auditSvc)
 
 	if err := jobsSvc.Start(context.Background()); err != nil {
 		return fmt.Errorf("starting job service: %w", err)

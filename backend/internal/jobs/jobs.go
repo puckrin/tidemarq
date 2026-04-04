@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"github.com/tidemarq/tidemarq/internal/audit"
 	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/db"
 	"github.com/tidemarq/tidemarq/internal/engine"
@@ -73,6 +74,7 @@ type Service struct {
 	versionsSvc  *versions.Service
 	conflictsSvc *conflicts.Service
 	mountsSvc    *mounts.Service // may be nil if mounts feature is disabled
+	auditSvc     *audit.Service  // may be nil; used to persist job lifecycle events
 
 	scheduler *cron.Cron
 
@@ -82,7 +84,7 @@ type Service struct {
 }
 
 // New creates a Service. Call Start to activate scheduling and watching.
-func New(database *db.DB, eng *engine.Engine, hub *ws.Hub, watcher *watch.Manager, versionsSvc *versions.Service, conflictsSvc *conflicts.Service, mountsSvc *mounts.Service) *Service {
+func New(database *db.DB, eng *engine.Engine, hub *ws.Hub, watcher *watch.Manager, versionsSvc *versions.Service, conflictsSvc *conflicts.Service, mountsSvc *mounts.Service, auditSvc *audit.Service) *Service {
 	return &Service{
 		db:           database,
 		engine:       eng,
@@ -91,6 +93,7 @@ func New(database *db.DB, eng *engine.Engine, hub *ws.Hub, watcher *watch.Manage
 		versionsSvc:  versionsSvc,
 		conflictsSvc: conflictsSvc,
 		mountsSvc:    mountsSvc,
+		auditSvc:     auditSvc,
 		scheduler:    cron.New(),
 		running:      make(map[int64]*runContext),
 		cronIDs:      make(map[int64]cron.EntryID),
@@ -319,6 +322,9 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 
 	_ = s.db.UpdateJobStatus(ctx, job.ID, "running", nil, false)
 	s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "started"})
+	if s.auditSvc != nil {
+		s.auditSvc.LogJob(ctx, job.ID, job.Name, "system", "job_started", "Job started", "")
+	}
 
 	// Open mount FS connections if the job uses network mounts.
 	srcFS, dstFS, fsErr := s.openJobFS(ctx, job)
@@ -403,12 +409,18 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		msg := runErr.Error()
 		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "error", &msg, true)
 		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
+		if s.auditSvc != nil {
+			s.auditSvc.LogJob(context.Background(), job.ID, job.Name, "system", "job_failed", "Job error", msg)
+		}
 		return
 	}
 
 	if result.Paused {
 		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "paused", nil, false)
 		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "paused"})
+		if s.auditSvc != nil {
+			s.auditSvc.LogJob(context.Background(), job.ID, job.Name, "system", "job_stopped", "Job stopped", "")
+		}
 		return
 	}
 
@@ -416,16 +428,24 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		msg := fmt.Sprintf("%d file(s) failed: %v", len(result.Errors), result.Errors[0].Err)
 		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "error", &msg, true)
 		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
+		if s.auditSvc != nil {
+			s.auditSvc.LogJob(context.Background(), job.ID, job.Name, "system", "job_failed", "Job error", msg)
+		}
 		return
 	}
 
+	total := result.FilesCopied + result.FilesSkipped
 	_ = s.db.UpdateJobStatus(context.Background(), job.ID, "idle", nil, true)
 	s.hub.Broadcast(ws.Event{
 		JobID:      job.ID,
 		Event:      "completed",
-		FilesDone:  result.FilesCopied + result.FilesSkipped,
-		FilesTotal: result.FilesCopied + result.FilesSkipped,
+		FilesDone:  total,
+		FilesTotal: total,
 	})
+	if s.auditSvc != nil {
+		detail := fmt.Sprintf("%d files processed (%d copied, %d skipped)", total, result.FilesCopied, result.FilesSkipped)
+		s.auditSvc.LogJob(context.Background(), job.ID, job.Name, "system", "job_completed", "Job completed", detail)
+	}
 }
 
 // registerTriggers sets up cron and/or watch triggers for j.
