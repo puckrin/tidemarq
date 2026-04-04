@@ -51,6 +51,10 @@ type Config struct {
 	// Only fires when a copy is actually needed — not for skipped files.
 	// Not throttled: copies are already infrequent. May be nil.
 	OnFileCopyStart  func(relPath string)
+	// OnCopyProgress is called periodically during a file transfer with the number
+	// of bytes written so far for the current file only. The engine sets this
+	// internally per-file (jobs.go should not set it). May be nil.
+	OnCopyProgress   func(bytesSoFar int64)
 	PauseCh          <-chan struct{}   // closed or sent on to request a graceful pause
 	VersionsSvc      *versions.Service // may be nil; used to snapshot before overwrite
 	ConflictsSvc     *conflicts.Service // may be nil; used to record conflicts
@@ -133,7 +137,22 @@ func (e *Engine) runBackup(ctx context.Context, cfg Config) (*Result, error) {
 			return result, ctxErr
 		}
 
-		copied, skipped, written, ferr := e.syncFileFS(ctx, cfg, srcFS, dstFS, fi, false)
+		// Attach a per-file mid-copy progress callback so stats update during large
+		// file transfers, not just after each file completes.
+		prevBytes := bytesDone
+		fileCfg := cfg
+		fileCfg.OnCopyProgress = func(bytesSoFar int64) {
+			partial := prevBytes + bytesSoFar
+			emitProgress(cfg.OnProgress, Progress{
+				FilesDone:    done,
+				FilesTotal:   total,
+				FilesSkipped: result.FilesSkipped,
+				BytesDone:    partial,
+				RateKBs:      rt.rate(partial),
+			})
+		}
+
+		copied, skipped, written, ferr := e.syncFileFS(ctx, fileCfg, srcFS, dstFS, fi, false)
 		if errors.Is(ferr, errMidFilePause) {
 			result.Paused = true
 			return result, nil
@@ -200,7 +219,22 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 			return result, ctxErr
 		}
 
-		copied, skipped, written, ferr := e.syncFileFS(ctx, cfg, srcFS, dstFS, fi, false)
+		// Attach a per-file mid-copy progress callback so stats update during large
+		// file transfers, not just after each file completes.
+		prevBytes := bytesDone
+		fileCfg := cfg
+		fileCfg.OnCopyProgress = func(bytesSoFar int64) {
+			partial := prevBytes + bytesSoFar
+			emitProgress(cfg.OnProgress, Progress{
+				FilesDone:    done,
+				FilesTotal:   total,
+				FilesSkipped: result.FilesSkipped,
+				BytesDone:    partial,
+				RateKBs:      rt.rate(partial),
+			})
+		}
+
+		copied, skipped, written, ferr := e.syncFileFS(ctx, fileCfg, srcFS, dstFS, fi, false)
 		if errors.Is(ferr, errMidFilePause) {
 			result.Paused = true
 			return result, nil
@@ -787,9 +821,14 @@ func (e *Engine) transferFileFSStreaming(ctx context.Context, cfg Config, srcFS,
 	dstHasher := sha256.New()
 
 	// Single pass: throttled read → tee to src hasher → write to dest file + dest hasher.
+	// Wrap the destination writer with progressWriter when a mid-copy callback is set.
 	throttled := newThrottledReader(srcFile, cfg.BandwidthLimitKB, cfg.PauseCh)
 	tee := io.TeeReader(throttled, srcHasher)
-	written, copyErr := io.Copy(io.MultiWriter(dstFile, dstHasher), tee)
+	dst := io.Writer(io.MultiWriter(dstFile, dstHasher))
+	if cfg.OnCopyProgress != nil {
+		dst = &progressWriter{w: dst, onUpdate: cfg.OnCopyProgress}
+	}
+	written, copyErr := io.Copy(dst, tee)
 
 	if tr, ok := throttled.(*throttledReader); ok && tr.paused {
 		_ = dstFS.Remove(fi.RelPath)
@@ -1032,6 +1071,25 @@ func pathDir(relPath string) string {
 // rateTracker computes a smoothed transfer rate.
 type rateTracker struct {
 	start time.Time
+}
+
+// progressWriter wraps an io.Writer and fires an optional callback every 250 ms
+// with the total bytes written through it so far. Used for mid-copy progress events.
+type progressWriter struct {
+	w        io.Writer
+	count    int64
+	lastFire time.Time
+	onUpdate func(int64)
+}
+
+func (pw *progressWriter) Write(p []byte) (n int, err error) {
+	n, err = pw.w.Write(p)
+	pw.count += int64(n)
+	if pw.onUpdate != nil && time.Since(pw.lastFire) >= 250*time.Millisecond {
+		pw.lastFire = time.Now()
+		pw.onUpdate(pw.count)
+	}
+	return
 }
 
 func (rt *rateTracker) rate(bytesDone int64) float64 {
