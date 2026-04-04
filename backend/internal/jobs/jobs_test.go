@@ -43,7 +43,7 @@ func newTestService(t *testing.T) (*jobs.Service, string, string) {
 
 	store := manifest.New(d)
 	eng := engine.New(store)
-	svc := jobs.New(d, eng, hub, watcher, nil, nil)
+	svc := jobs.New(d, eng, hub, watcher, nil, nil, nil)
 	if err := svc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

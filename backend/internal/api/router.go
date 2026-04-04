@@ -72,6 +72,40 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/api/v1/versions/{id}/restore", s.handleRestoreVersion)
 			r.Post("/api/v1/quarantine/{id}/restore", s.handleRestoreQuarantine)
 		})
+
+		// Mounts: admin/operator write, all authenticated read.
+		r.Get("/api/v1/mounts", s.handleListMounts)
+		r.Get("/api/v1/mounts/{id}", s.handleGetMount)
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireRole("admin", "operator"))
+			r.Post("/api/v1/mounts", s.handleCreateMount)
+			r.Put("/api/v1/mounts/{id}", s.handleUpdateMount)
+			r.Delete("/api/v1/mounts/{id}", s.handleDeleteMount)
+			r.Post("/api/v1/mounts/{id}/test", s.handleTestMount)
+		})
+
+		// Notifications: admin only.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireRole("admin"))
+			r.Get("/api/v1/notifications/targets", s.handleListNotificationTargets)
+			r.Post("/api/v1/notifications/targets", s.handleCreateNotificationTarget)
+			r.Get("/api/v1/notifications/targets/{id}", s.handleGetNotificationTarget)
+			r.Put("/api/v1/notifications/targets/{id}", s.handleUpdateNotificationTarget)
+			r.Delete("/api/v1/notifications/targets/{id}", s.handleDeleteNotificationTarget)
+			r.Get("/api/v1/notifications/rules", s.handleListNotificationRules)
+			r.Post("/api/v1/notifications/rules", s.handleCreateNotificationRule)
+			r.Delete("/api/v1/notifications/rules/{id}", s.handleDeleteNotificationRule)
+		})
+
+		// Directory browser: all authenticated users can browse.
+		r.Get("/api/v1/browse", s.handleBrowse)
+
+		// Audit log: all authenticated can read; export is admin only.
+		r.Get("/api/v1/audit", s.handleListAuditLog)
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireRole("admin"))
+			r.Get("/api/v1/audit/export", s.handleExportAuditLog)
+		})
 	})
 
 	// Static frontend.

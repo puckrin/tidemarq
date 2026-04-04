@@ -16,11 +16,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/tidemarq/tidemarq/internal/audit"
 	"github.com/tidemarq/tidemarq/internal/auth"
 	"github.com/tidemarq/tidemarq/internal/config"
 	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/db"
 	"github.com/tidemarq/tidemarq/internal/jobs"
+	"github.com/tidemarq/tidemarq/internal/mounts"
+	"github.com/tidemarq/tidemarq/internal/notifications"
 	"github.com/tidemarq/tidemarq/internal/versions"
 	"github.com/tidemarq/tidemarq/internal/ws"
 )
@@ -34,11 +37,25 @@ type Server struct {
 	cfg          *config.Config
 	conflictsSvc *conflicts.Service
 	versionsSvc  *versions.Service
+	mountsSvc    *mounts.Service
+	notifSvc     *notifications.Service
+	auditSvc     *audit.Service
 	startTime    time.Time
 }
 
 // NewServer creates a Server with the given dependencies.
-func NewServer(cfg *config.Config, database *db.DB, authSvc *auth.Service, jobsSvc *jobs.Service, hub *ws.Hub, conflictsSvc *conflicts.Service, versionsSvc *versions.Service) *Server {
+func NewServer(
+	cfg *config.Config,
+	database *db.DB,
+	authSvc *auth.Service,
+	jobsSvc *jobs.Service,
+	hub *ws.Hub,
+	conflictsSvc *conflicts.Service,
+	versionsSvc *versions.Service,
+	mountsSvc *mounts.Service,
+	notifSvc *notifications.Service,
+	auditSvc *audit.Service,
+) *Server {
 	return &Server{
 		db:           database,
 		authSvc:      authSvc,
@@ -47,6 +64,9 @@ func NewServer(cfg *config.Config, database *db.DB, authSvc *auth.Service, jobsS
 		cfg:          cfg,
 		conflictsSvc: conflictsSvc,
 		versionsSvc:  versionsSvc,
+		mountsSvc:    mountsSvc,
+		notifSvc:     notifSvc,
+		auditSvc:     auditSvc,
 		startTime:    time.Now(),
 	}
 }

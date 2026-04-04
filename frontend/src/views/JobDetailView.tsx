@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react'
-import { Pause, Play, Trash2, Pencil } from 'lucide-react'
+import { useState } from 'react'
+import { Pause, Play, Trash2, Pencil, FileCheck, FileCog, FileX } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getJob, runJob, pauseJob, resumeJob, deleteJob } from '../api/client'
 import { Badge } from '../components/Badge'
@@ -8,8 +8,8 @@ import { Card, CardHeader } from '../components/Card'
 import { ProgressBar } from '../components/ProgressBar'
 import { Modal } from '../components/Modal'
 import { useToast } from '../components/Toast'
-import { useWsEvents } from '../hooks/useWsEvents'
-import type { WsEvent, Job } from '../api/types'
+import { useJobProgress } from '../store/jobProgress'
+import type { Job } from '../api/types'
 import type { View } from '../components/Sidebar'
 
 interface Props { jobId: number; onNav: (v: View, id?: number) => void }
@@ -43,18 +43,28 @@ function fmtBytes(b: number) {
   return `${(b/1073741824).toFixed(2)} GB`
 }
 
+function actionIcon(action: string) {
+  if (action === 'copied') return <FileCheck size={12} style={{ color: 'var(--accent)', flexShrink: 0 }}/>
+  if (action === 'removing') return <FileX size={12} style={{ color: 'var(--coral-light)', flexShrink: 0 }}/>
+  return <FileCog size={12} style={{ color: 'var(--text3)', flexShrink: 0 }}/>
+}
+
+function actionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    copied: 'Copied', skipped: 'Unchanged', removing: 'Removed',
+  }
+  return labels[action] ?? action
+}
+
 export function JobDetailView({ jobId, onNav }: Props) {
   const qc = useQueryClient()
   const toast = useToast()
   const [delModal, setDelModal] = useState(false)
-  const [wsData, setWsData] = useState<WsEvent | null>(null)
 
   const { data: job } = useQuery({ queryKey: ['job', jobId], queryFn: () => getJob(jobId), refetchInterval: 5000 })
 
-  const handler = useCallback((e: WsEvent) => {
-    if (e.job_id === jobId) setWsData(e)
-  }, [jobId])
-  useWsEvents(handler)
+  // Global progress store — survives navigation
+  const progress = useJobProgress(jobId)
 
   const run    = useMutation({ mutationFn: () => runJob(jobId),    onSuccess: () => { qc.invalidateQueries({queryKey:['job',jobId]}); toast('Job started.','ok') } })
   const pause  = useMutation({ mutationFn: () => pauseJob(jobId),  onSuccess: () => { qc.invalidateQueries({queryKey:['job',jobId]}); toast('Job paused.','info') } })
@@ -63,7 +73,8 @@ export function JobDetailView({ jobId, onNav }: Props) {
 
   if (!job) return <div className="text3" style={{ padding: 24 }}>Loading…</div>
 
-  const pct = wsData?.files_total ? Math.round((wsData.files_done ?? 0) / wsData.files_total * 100) : 0
+  const isRunning = job.status === 'running'
+  const pct = progress.filesTotal > 0 ? Math.round(progress.filesDone / progress.filesTotal * 100) : 0
 
   return (
     <div>
@@ -101,40 +112,112 @@ export function JobDetailView({ jobId, onNav }: Props) {
         </div>
       </div>
 
-      {/* Live progress panel */}
-      {job.status === 'running' && (
-        <div className="run-panel">
+      {/* Live progress panel — shown while running, or while progress data exists from this session */}
+      {(isRunning || progress.lastEvent !== '') && (
+        <div className="run-panel" style={{ marginBottom: 20 }}>
           <div className="run-hd">
             <div className="flex gap8">
-              <Badge variant="running">Running</Badge>
+              {isRunning
+                ? <Badge variant="running">Running</Badge>
+                : <Badge variant={progress.lastEvent === 'completed' ? 'synced' : progress.lastEvent === 'paused' ? 'pending' : 'error'}>
+                    {progress.lastEvent === 'completed' ? 'Completed' : progress.lastEvent === 'paused' ? 'Paused' : progress.lastEvent === 'error' ? 'Error' : 'Running'}
+                  </Badge>
+              }
             </div>
-            <Button variant="ghost" size="sm" onClick={() => pause.mutate()}>Pause</Button>
+            {isRunning && (
+              <Button variant="ghost" size="sm" onClick={() => pause.mutate()}>Pause</Button>
+            )}
           </div>
+
           <ProgressBar pct={pct} height={8} />
+
+          {/* Current file indicator — shows during scanning (evaluating) and copying (bytes moving).
+              Stays visible between files, showing the last known in-progress state. */}
+          {(progress.currentAction === 'scanning' || progress.currentAction === 'copying') && progress.currentFile && (
+            <div style={{
+              marginTop: 8,
+              fontSize: 12,
+              color: 'var(--text2)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              overflow: 'hidden',
+            }}>
+              <span style={{ color: 'var(--text3)', flexShrink: 0 }}>
+                {progress.currentAction === 'copying' ? 'Copying:' : 'Scanning:'}
+              </span>
+              <span className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {progress.currentFile}
+              </span>
+            </div>
+          )}
+
+          {/* Stats row */}
           <div className="run-stats">
             <div>
               <div className="run-stat-label">Files Done</div>
-              <div className="run-stat-val">{wsData?.files_done ?? 0} / {wsData?.files_total ?? '?'}</div>
+              <div className="run-stat-val">
+                {progress.filesDone} / {progress.filesTotal > 0 ? progress.filesTotal : '?'}
+              </div>
+            </div>
+            <div>
+              <div className="run-stat-label">Unchanged</div>
+              <div className="run-stat-val">{progress.filesSkipped}</div>
             </div>
             <div>
               <div className="run-stat-label">Transfer Rate</div>
               <div className="run-stat-val">
-                {wsData?.rate_kbs ? `${(wsData.rate_kbs/1024).toFixed(1)} MB/s` : '—'}
+                {progress.rateKBs > 0 ? `${(progress.rateKBs/1024).toFixed(1)} MB/s` : '—'}
               </div>
             </div>
             <div>
               <div className="run-stat-label">Data Moved</div>
               <div className="run-stat-val">
-                {wsData?.bytes_done ? fmtBytes(wsData.bytes_done) : '—'}
+                {progress.bytesDone > 0 ? fmtBytes(progress.bytesDone) : '—'}
               </div>
             </div>
             <div>
               <div className="run-stat-label">Remaining</div>
               <div className="run-stat-val">
-                {wsData?.eta_secs != null ? `~${Math.ceil(wsData.eta_secs/60)} min` : '—'}
+                {progress.etaSecs > 0 ? `~${Math.ceil(progress.etaSecs/60)} min` : '—'}
               </div>
             </div>
           </div>
+
+          {/* Recent file activity */}
+          {progress.recentFiles.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>
+                Recent activity
+              </div>
+              <div style={{
+                maxHeight: 160,
+                overflowY: 'auto',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)',
+                background: 'var(--input-bg)',
+              }}>
+                {progress.recentFiles.map((f, i) => (
+                  <div key={i} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '4px 10px',
+                    borderBottom: i < progress.recentFiles.length - 1 ? '1px solid var(--border)' : undefined,
+                    fontSize: 12,
+                  }}>
+                    {actionIcon(f.action)}
+                    <span className="mono" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text2)' }}>
+                      {f.relPath}
+                    </span>
+                    <span style={{ color: 'var(--text3)', flexShrink: 0, fontSize: 11 }}>
+                      {actionLabel(f.action)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -152,6 +235,7 @@ export function JobDetailView({ jobId, onNav }: Props) {
                 : job.watch_enabled ? 'FS watch' : job.cron_schedule || 'Manual'],
               ['Conflict strategy', job.conflict_strategy.replace(/-/g,' ')],
               ['Bandwidth limit', job.bandwidth_limit_kb > 0 ? `${(job.bandwidth_limit_kb/1024).toFixed(1)} MB/s` : 'None'],
+              ['Verification', job.full_checksum ? 'Full SHA-256 (all files)' : 'Metadata fast-path'],
             ].map(([label, val]) => (
               <div key={String(label)} className="flex gap8">
                 <span className="text3 fw5" style={{ minWidth: 130 }}>{label}</span>
@@ -167,7 +251,7 @@ export function JobDetailView({ jobId, onNav }: Props) {
           </div>
         </Card>
 
-        {/* Run history (static, API doesn't expose this yet) */}
+        {/* Details */}
         <Card>
           <CardHeader title="Details"/>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13 }}>

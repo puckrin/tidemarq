@@ -15,22 +15,28 @@ type createJobRequest struct {
 	Name             string `json:"name"`
 	SourcePath       string `json:"source_path"`
 	DestinationPath  string `json:"destination_path"`
+	SourceMountID    *int64 `json:"source_mount_id,omitempty"`
+	DestMountID      *int64 `json:"dest_mount_id,omitempty"`
 	Mode             string `json:"mode"`
 	BandwidthLimitKB int64  `json:"bandwidth_limit_kb"`
 	ConflictStrategy string `json:"conflict_strategy"`
 	CronSchedule     string `json:"cron_schedule"`
 	WatchEnabled     bool   `json:"watch_enabled"`
+	FullChecksum     bool   `json:"full_checksum"`
 }
 
 type updateJobRequest struct {
 	Name             string `json:"name"`
 	SourcePath       string `json:"source_path"`
 	DestinationPath  string `json:"destination_path"`
+	SourceMountID    *int64 `json:"source_mount_id,omitempty"`
+	DestMountID      *int64 `json:"dest_mount_id,omitempty"`
 	Mode             string `json:"mode"`
 	BandwidthLimitKB int64  `json:"bandwidth_limit_kb"`
 	ConflictStrategy string `json:"conflict_strategy"`
 	CronSchedule     string `json:"cron_schedule"`
 	WatchEnabled     bool   `json:"watch_enabled"`
+	FullChecksum     bool   `json:"full_checksum"`
 }
 
 func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
@@ -56,11 +62,14 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		Name:             req.Name,
 		SourcePath:       req.SourcePath,
 		DestinationPath:  req.DestinationPath,
+		SourceMountID:    req.SourceMountID,
+		DestMountID:      req.DestMountID,
 		Mode:             req.Mode,
 		BandwidthLimitKB: req.BandwidthLimitKB,
 		ConflictStrategy: req.ConflictStrategy,
 		CronSchedule:     req.CronSchedule,
 		WatchEnabled:     req.WatchEnabled,
+		FullChecksum:     req.FullChecksum,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error(), "bad_request")
@@ -107,11 +116,14 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		Name:             req.Name,
 		SourcePath:       req.SourcePath,
 		DestinationPath:  req.DestinationPath,
+		SourceMountID:    req.SourceMountID,
+		DestMountID:      req.DestMountID,
 		Mode:             req.Mode,
 		BandwidthLimitKB: req.BandwidthLimitKB,
 		ConflictStrategy: req.ConflictStrategy,
 		CronSchedule:     req.CronSchedule,
 		WatchEnabled:     req.WatchEnabled,
+		FullChecksum:     req.FullChecksum,
 	})
 	if err != nil {
 		if errors.Is(err, jobs.ErrNotFound) {

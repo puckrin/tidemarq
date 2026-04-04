@@ -10,14 +10,17 @@ import (
 
 // Event is a progress or lifecycle notification broadcast to all WS clients.
 type Event struct {
-	JobID      int64   `json:"job_id"`
-	Event      string  `json:"event"` // "started","progress","paused","completed","error"
-	FilesDone  int     `json:"files_done,omitempty"`
-	FilesTotal int     `json:"files_total,omitempty"`
-	BytesDone  int64   `json:"bytes_done,omitempty"`
-	RateKBs    float64 `json:"rate_kbs,omitempty"`
-	ETASecs    int     `json:"eta_secs,omitempty"`
-	Message    string  `json:"message,omitempty"`
+	JobID        int64   `json:"job_id"`
+	Event        string  `json:"event"` // "started","progress","paused","completed","error"
+	FilesDone    int     `json:"files_done,omitempty"`
+	FilesTotal   int     `json:"files_total,omitempty"`
+	FilesSkipped int     `json:"files_skipped,omitempty"`
+	BytesDone    int64   `json:"bytes_done,omitempty"`
+	RateKBs      float64 `json:"rate_kbs,omitempty"`
+	ETASecs      int     `json:"eta_secs,omitempty"`
+	CurrentFile  string  `json:"current_file,omitempty"`
+	FileAction   string  `json:"file_action,omitempty"` // "scanning","copying","copied","skipped","removing","present"
+	Message      string  `json:"message,omitempty"`
 }
 
 // client wraps a WebSocket connection with a send channel.
@@ -61,17 +64,28 @@ func (h *Hub) Broadcast(e Event) {
 		return
 	}
 
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	var slow []*client
 
+	h.mu.RLock()
 	for c := range h.clients {
 		select {
 		case c.sendCh <- data:
 		default:
-			// Slow client — close and let writePump clean up.
-			close(c.sendCh)
-			delete(h.clients, c)
+			slow = append(slow, c)
 		}
+	}
+	h.mu.RUnlock()
+
+	// Remove slow clients under a write lock so the map is not mutated during RLock.
+	if len(slow) > 0 {
+		h.mu.Lock()
+		for _, c := range slow {
+			if _, ok := h.clients[c]; ok {
+				close(c.sendCh)
+				delete(h.clients, c)
+			}
+		}
+		h.mu.Unlock()
 	}
 }
 

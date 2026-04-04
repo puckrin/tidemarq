@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './store/auth'
 import { ToastProvider } from './components/Toast'
 import { AuditLogProvider } from './store/auditLog'
+import { JobProgressProvider } from './store/jobProgress'
 import { Sidebar, type View } from './components/Sidebar'
 import { Topbar } from './components/Topbar'
 import { useTheme } from './hooks/useTheme'
@@ -16,6 +17,7 @@ import { JobDetailView } from './views/JobDetailView'
 import { NewJobView }    from './views/NewJobView'
 import { ConflictsView } from './views/ConflictsView'
 import { AuditView }     from './views/AuditView'
+import { MountsView }    from './views/MountsView'
 import { SettingsView }  from './views/SettingsView'
 
 import './styles/global.css'
@@ -66,6 +68,7 @@ function Shell() {
   }
 
   return (
+    <JobProgressProvider>
     <AuditLogProvider jobNames={jobNames}>
       <div style={{ display: 'flex', width: '100%', height: '100%' }}>
         <Sidebar current={view} onNav={nav} conflictCount={pendingConflicts} />
@@ -79,11 +82,13 @@ function Shell() {
             {view === 'job-detail' && jobId != null && <JobDetailView jobId={jobId} onNav={nav} />}
             {view === 'conflicts'  && <ConflictsView />}
             {view === 'audit'      && <AuditView onNav={nav} />}
+            {view === 'mounts'     && <MountsView />}
             {view === 'settings'   && <SettingsView />}
           </div>
         </div>
       </div>
     </AuditLogProvider>
+    </JobProgressProvider>
   )
 }
 

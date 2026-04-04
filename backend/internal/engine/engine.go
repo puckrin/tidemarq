@@ -15,6 +15,7 @@ import (
 
 	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/manifest"
+	"github.com/tidemarq/tidemarq/internal/mountfs"
 	"github.com/tidemarq/tidemarq/internal/versions"
 )
 
@@ -28,9 +29,28 @@ type Config struct {
 	ConflictStrategy string // ask-user | newest-wins | largest-wins | source-wins | destination-wins
 	SourcePath       string
 	DestinationPath  string
+	// SourceFS and DestFS are optional MountFS implementations. When set they
+	// override SourcePath/DestinationPath for all filesystem I/O. Use this for
+	// network mounts (SFTP, SMB). When nil, a LocalFS rooted at SourcePath /
+	// DestinationPath is created automatically (backward-compatible).
+	SourceFS         mountfs.MountFS
+	DestFS           mountfs.MountFS
 	BandwidthLimitKB int64            // 0 = unlimited
 	Workers          int              // 0 = defaultWorkers
+	// FullChecksum forces SHA-256 hashing of the source before every copy decision,
+	// regardless of whether the file metadata matches the manifest.
+	// Default (false) uses a metadata fast-path: if size and mtime match the manifest
+	// entry, the file is skipped without reading its contents, and copies use a single
+	// streaming pass that computes hashes inline. Recommended for large or network sources.
+	FullChecksum     bool
 	OnProgress       func(Progress)   // called after each file is processed; may be nil
+	// OnFileStart is called immediately before a file begins evaluation (before any
+	// hashing or copy decision). It is rate-limited by the caller. May be nil.
+	OnFileStart      func(relPath string)
+	// OnFileCopyStart is called immediately before bytes start moving for a copy.
+	// Only fires when a copy is actually needed — not for skipped files.
+	// Not throttled: copies are already infrequent. May be nil.
+	OnFileCopyStart  func(relPath string)
 	PauseCh          <-chan struct{}   // closed or sent on to request a graceful pause
 	VersionsSvc      *versions.Service // may be nil; used to snapshot before overwrite
 	ConflictsSvc     *conflicts.Service // may be nil; used to record conflicts
@@ -38,10 +58,13 @@ type Config struct {
 
 // Progress is emitted after each file is processed during a run.
 type Progress struct {
-	FilesDone  int
-	FilesTotal int
-	BytesDone  int64
-	RateKBs    float64 // transfer rate over the last interval
+	FilesDone    int
+	FilesTotal   int
+	FilesSkipped int
+	BytesDone    int64
+	RateKBs      float64 // transfer rate over the last interval
+	CurrentFile  string  // relative path of the file just processed
+	FileAction   string  // "copied" | "skipped" | "removing" | "present"
 }
 
 // Result summarises the outcome of a sync run.
@@ -88,7 +111,9 @@ func (e *Engine) Run(ctx context.Context, cfg Config) (*Result, error) {
 // -------------------------------------------------------------------------
 
 func (e *Engine) runBackup(ctx context.Context, cfg Config) (*Result, error) {
-	files, err := scanDir(ctx, cfg.SourcePath, cfg.Workers)
+	srcFS, dstFS := resolveFS(cfg)
+
+	files, err := scanFS(ctx, srcFS, cfg.Workers)
 	if err != nil {
 		return nil, fmt.Errorf("scanning source: %w", err)
 	}
@@ -108,7 +133,7 @@ func (e *Engine) runBackup(ctx context.Context, cfg Config) (*Result, error) {
 			return result, ctxErr
 		}
 
-		copied, skipped, written, ferr := e.syncFile(ctx, cfg, fi, cfg.SourcePath, cfg.DestinationPath, false)
+		copied, skipped, written, ferr := e.syncFileFS(ctx, cfg, srcFS, dstFS, fi, false)
 		if errors.Is(ferr, errMidFilePause) {
 			result.Paused = true
 			return result, nil
@@ -126,7 +151,19 @@ func (e *Engine) runBackup(ctx context.Context, cfg Config) (*Result, error) {
 		bytesDone += written
 		mu.Unlock()
 
-		emitProgress(cfg.OnProgress, done, total, bytesDone, rt)
+		action := "skipped"
+		if copied > 0 {
+			action = "copied"
+		}
+		emitProgress(cfg.OnProgress, Progress{
+			FilesDone:    done,
+			FilesTotal:   total,
+			FilesSkipped: result.FilesSkipped,
+			BytesDone:    bytesDone,
+			RateKBs:      rt.rate(bytesDone),
+			CurrentFile:  fi.RelPath,
+			FileAction:   action,
+		})
 	}
 	return result, nil
 }
@@ -136,11 +173,13 @@ func (e *Engine) runBackup(ctx context.Context, cfg Config) (*Result, error) {
 // -------------------------------------------------------------------------
 
 func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
-	srcFiles, err := scanDir(ctx, cfg.SourcePath, cfg.Workers)
+	srcFS, dstFS := resolveFS(cfg)
+
+	srcFiles, err := scanFS(ctx, srcFS, cfg.Workers)
 	if err != nil {
 		return nil, fmt.Errorf("scanning source: %w", err)
 	}
-	destFiles, err := scanDir(ctx, cfg.DestinationPath, cfg.Workers)
+	destFiles, err := scanFS(ctx, dstFS, cfg.Workers)
 	if err != nil {
 		return nil, fmt.Errorf("scanning destination: %w", err)
 	}
@@ -161,7 +200,7 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 			return result, ctxErr
 		}
 
-		copied, skipped, written, ferr := e.syncFile(ctx, cfg, fi, cfg.SourcePath, cfg.DestinationPath, false)
+		copied, skipped, written, ferr := e.syncFileFS(ctx, cfg, srcFS, dstFS, fi, false)
 		if errors.Is(ferr, errMidFilePause) {
 			result.Paused = true
 			return result, nil
@@ -175,27 +214,63 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 		}
 		done++
 		bytesDone += written
-		emitProgress(cfg.OnProgress, done, total, bytesDone, rt)
+		action := "skipped"
+		if copied > 0 {
+			action = "copied"
+		}
+		emitProgress(cfg.OnProgress, Progress{
+			FilesDone:    done,
+			FilesTotal:   total,
+			FilesSkipped: result.FilesSkipped,
+			BytesDone:    bytesDone,
+			RateKBs:      rt.rate(bytesDone),
+			CurrentFile:  fi.RelPath,
+			FileAction:   action,
+		})
 	}
 
-	// Quarantine destination files that no longer exist in source.
+	// Quarantine (or remove) destination files that no longer exist in source.
 	for _, destFi := range destFiles {
 		if _, inSrc := srcIndex[destFi.RelPath]; inSrc {
+			// File still exists on source — already counted in the source pass.
+			// Emit a counter-only progress tick (no CurrentFile) so the progress
+			// bar advances without adding a duplicate entry to the activity list.
 			done++
-			emitProgress(cfg.OnProgress, done, total, bytesDone, rt)
+			emitProgress(cfg.OnProgress, Progress{
+				FilesDone:    done,
+				FilesTotal:   total,
+				FilesSkipped: result.FilesSkipped,
+				BytesDone:    bytesDone,
+				RateKBs:      rt.rate(bytesDone),
+			})
 			continue
 		}
-		destPath := filepath.Join(cfg.DestinationPath, filepath.FromSlash(destFi.RelPath))
-		if cfg.VersionsSvc != nil {
+		// For local destinations, attempt quarantine via the versions service.
+		// For remote destinations, fall back to direct removal.
+		localDst, isLocal := dstFS.(*mountfs.LocalFS)
+		if isLocal && cfg.VersionsSvc != nil {
+			destPath := filepath.Join(localDst.Root(), filepath.FromSlash(destFi.RelPath))
 			if _, err := cfg.VersionsSvc.Quarantine(ctx, cfg.JobID, destFi.RelPath, destPath); err != nil {
 				result.Errors = append(result.Errors, FileError{Path: destFi.RelPath, Err: fmt.Errorf("quarantine: %w", err)})
 			} else {
 				result.Quarantined++
 				_ = e.manifest.Delete(ctx, cfg.JobID, destFi.RelPath)
 			}
+		} else {
+			// Remote dest: just remove the file.
+			if err := dstFS.Remove(destFi.RelPath); err != nil {
+				result.Errors = append(result.Errors, FileError{Path: destFi.RelPath, Err: fmt.Errorf("remove: %w", err)})
+			} else {
+				result.Quarantined++
+				_ = e.manifest.Delete(ctx, cfg.JobID, destFi.RelPath)
+			}
 		}
 		done++
-		emitProgress(cfg.OnProgress, done, total, bytesDone, rt)
+		emitProgress(cfg.OnProgress, Progress{
+			FilesDone: done, FilesTotal: total, FilesSkipped: result.FilesSkipped,
+			BytesDone: bytesDone, RateKBs: rt.rate(bytesDone),
+			CurrentFile: destFi.RelPath, FileAction: "removing",
+		})
 	}
 
 	return result, nil
@@ -206,6 +281,10 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 // -------------------------------------------------------------------------
 
 func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
+	if cfg.SourceFS != nil || cfg.DestFS != nil {
+		return nil, fmt.Errorf("two-way sync with network mounts is not yet supported; use one-way-backup or one-way-mirror")
+	}
+
 	srcFiles, err := scanDir(ctx, cfg.SourcePath, cfg.Workers)
 	if err != nil {
 		return nil, fmt.Errorf("scanning source: %w", err)
@@ -345,15 +424,28 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 		}
 
 		done++
-		bytesDone += 0 // progress byte tracking handled per-file above
-		emitProgress(cfg.OnProgress, done, total, bytesDone, rt)
+		emitProgress(cfg.OnProgress, Progress{
+			FilesDone:    done,
+			FilesTotal:   total,
+			FilesSkipped: result.FilesSkipped,
+			BytesDone:    bytesDone,
+			RateKBs:      rt.rate(bytesDone),
+			CurrentFile:  srcFi.RelPath,
+		})
 	}
 
 	// --- Dest-only files (new on destination side) ---
 	for _, destFi := range destFiles {
 		if _, inSrc := srcIndex[destFi.RelPath]; inSrc {
+			// Already counted in the source pass — counter-only tick, no file activity.
 			done++
-			emitProgress(cfg.OnProgress, done, total, bytesDone, rt)
+			emitProgress(cfg.OnProgress, Progress{
+				FilesDone:    done,
+				FilesTotal:   total,
+				FilesSkipped: result.FilesSkipped,
+				BytesDone:    bytesDone,
+				RateKBs:      rt.rate(bytesDone),
+			})
 			continue
 		}
 
@@ -406,7 +498,14 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 		}
 
 		done++
-		emitProgress(cfg.OnProgress, done, total, bytesDone, rt)
+		emitProgress(cfg.OnProgress, Progress{
+			FilesDone:    done,
+			FilesTotal:   total,
+			FilesSkipped: result.FilesSkipped,
+			BytesDone:    bytesDone,
+			RateKBs:      rt.rate(bytesDone),
+			CurrentFile:  destFi.RelPath,
+		})
 	}
 
 	return result, nil
@@ -455,9 +554,78 @@ func (e *Engine) handleTwoWayConflict(
 	return e.transferFile(ctx, cfg, winnerPath, destPath, fi, srcHash)
 }
 
+// resolveFS returns the source and destination MountFS for a Config.
+// If SourceFS/DestFS are nil, LocalFS instances are created from SourcePath/DestinationPath.
+func resolveFS(cfg Config) (srcFS, dstFS mountfs.MountFS) {
+	if cfg.SourceFS != nil {
+		srcFS = cfg.SourceFS
+	} else {
+		srcFS = mountfs.NewLocalFS(cfg.SourcePath)
+	}
+	if cfg.DestFS != nil {
+		dstFS = cfg.DestFS
+	} else {
+		dstFS = mountfs.NewLocalFS(cfg.DestinationPath)
+	}
+	return srcFS, dstFS
+}
+
+// transferFileFS copies srcRelPath from srcFS to dstRelPath on dstFS,
+// verifies SHA-256 integrity, updates the manifest, and preserves metadata.
+func (e *Engine) transferFileFS(ctx context.Context, cfg Config, srcFS, dstFS mountfs.MountFS, fi FileInfo, syncedHash string) (int64, error) {
+	if cfg.OnFileCopyStart != nil {
+		cfg.OnFileCopyStart(fi.RelPath)
+	}
+
+	// Ensure parent directory exists on destination.
+	dstDir := pathDir(fi.RelPath)
+	if dstDir != "" && dstDir != "." {
+		if err := dstFS.MkdirAll(dstDir); err != nil {
+			return 0, fmt.Errorf("mkdir: %w", err)
+		}
+	}
+
+	written, paused, err := copyFSFile(srcFS, dstFS, fi.RelPath, fi.RelPath, cfg.BandwidthLimitKB, cfg.PauseCh)
+	if err != nil {
+		return 0, fmt.Errorf("copying file: %w", err)
+	}
+	if paused {
+		_ = dstFS.Remove(fi.RelPath)
+		return 0, errMidFilePause
+	}
+
+	destHash, err := hashFSFile(dstFS, fi.RelPath)
+	if err != nil {
+		return 0, fmt.Errorf("hashing destination: %w", err)
+	}
+	if destHash != syncedHash {
+		return 0, fmt.Errorf("checksum mismatch after transfer: src %s dest %s", syncedHash, destHash)
+	}
+
+	// Best-effort: preserve mtime on local destinations.
+	if lfs, ok := dstFS.(*mountfs.LocalFS); ok {
+		_ = lfs.Chtimes(fi.RelPath, fi.ModTime)
+	}
+
+	if err := e.manifest.Put(ctx, &manifest.Entry{
+		JobID:       cfg.JobID,
+		RelPath:     fi.RelPath,
+		SHA256:      syncedHash,
+		SizeBytes:   written,
+		ModTime:     fi.ModTime,
+		Permissions: fi.Permissions,
+		SyncedAt:    time.Now(),
+	}); err != nil {
+		return 0, fmt.Errorf("updating manifest: %w", err)
+	}
+
+	return written, nil
+}
+
 // transferFile copies from srcAbsPath to dstAbsPath, verifies integrity, updates the manifest.
 // fi provides RelPath and metadata for the manifest record.
 // syncedHash is the hash we expect srcAbsPath to have (pre-computed to avoid double-hashing).
+// Used only by the two-way engine path (local-only).
 func (e *Engine) transferFile(ctx context.Context, cfg Config, srcAbsPath, dstAbsPath string, fi FileInfo, syncedHash string) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(dstAbsPath), 0o755); err != nil {
 		return 0, fmt.Errorf("mkdir: %w", err)
@@ -503,8 +671,169 @@ func (e *Engine) transferFile(ctx context.Context, cfg Config, srcAbsPath, dstAb
 	return written, nil
 }
 
+// syncFileFS decides whether to copy fi from srcFS to dstFS and does so.
+// Returns (filesCopied, filesSkipped, bytesWritten, error).
+//
+// Default mode (FullChecksum=false): compares file size and mtime against the
+// manifest entry as a fast-path skip decision. When a copy is needed, source and
+// destination hashes are computed inline during the single copy pass — the source
+// is only read once. Suitable for large or network-mounted sources.
+//
+// Full-checksum mode (FullChecksum=true): hashes the source in full before deciding
+// whether to copy, then verifies the destination hash after copy. Guarantees
+// bit-perfect accuracy at the cost of reading the source file at least once even
+// when the result is "skip". Use when mtime accuracy cannot be trusted.
+func (e *Engine) syncFileFS(ctx context.Context, cfg Config, srcFS, dstFS mountfs.MountFS, fi FileInfo, snapshot bool) (int, int, int64, error) {
+	if cfg.OnFileStart != nil {
+		cfg.OnFileStart(fi.RelPath)
+	}
+
+	entry, err := e.manifest.Get(ctx, cfg.JobID, fi.RelPath)
+	if err != nil && !errors.Is(err, manifest.ErrNotFound) {
+		return 0, 0, 0, fmt.Errorf("reading manifest: %w", err)
+	}
+
+	if cfg.FullChecksum {
+		return e.syncFileFSFull(ctx, cfg, srcFS, dstFS, fi, entry, snapshot)
+	}
+
+	// --- Default: metadata fast-path ---
+	// Skip without reading any file content when size+mtime match the manifest
+	// entry and the destination file already exists.
+	if entry != nil && fi.Size == entry.SizeBytes && mtimeMatch(fi.ModTime, entry.ModTime) {
+		if _, statErr := dstFS.Stat(fi.RelPath); statErr == nil {
+			return 0, 1, 0, nil
+		}
+	}
+
+	// Metadata mismatch or no prior sync record — snapshot if requested, then copy.
+	if snapshot && cfg.VersionsSvc != nil {
+		if lfs, ok := dstFS.(*mountfs.LocalFS); ok {
+			destAbsPath := filepath.Join(lfs.Root(), filepath.FromSlash(fi.RelPath))
+			if _, statErr := os.Stat(destAbsPath); statErr == nil {
+				_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, fi.RelPath, destAbsPath)
+			}
+		}
+	}
+
+	written, err := e.transferFileFSStreaming(ctx, cfg, srcFS, dstFS, fi)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return 1, 0, written, nil
+}
+
+// syncFileFSFull is the FullChecksum path: hash the source file in full first,
+// use the hash to decide skip vs copy, then verify the destination after transfer.
+func (e *Engine) syncFileFSFull(ctx context.Context, cfg Config, srcFS, dstFS mountfs.MountFS, fi FileInfo, entry *manifest.Entry, snapshot bool) (int, int, int64, error) {
+	srcHash, paused, err := hashFSFileWithPause(srcFS, fi.RelPath, cfg.PauseCh)
+	if paused {
+		return 0, 0, 0, errMidFilePause
+	}
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("hashing source: %w", err)
+	}
+
+	if entry != nil && entry.SHA256 == srcHash {
+		if _, statErr := dstFS.Stat(fi.RelPath); statErr == nil {
+			return 0, 1, 0, nil
+		}
+	}
+
+	if snapshot && cfg.VersionsSvc != nil {
+		if lfs, ok := dstFS.(*mountfs.LocalFS); ok {
+			destAbsPath := filepath.Join(lfs.Root(), filepath.FromSlash(fi.RelPath))
+			if _, statErr := os.Stat(destAbsPath); statErr == nil {
+				_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, fi.RelPath, destAbsPath)
+			}
+		}
+	}
+
+	written, err := e.transferFileFS(ctx, cfg, srcFS, dstFS, fi, srcHash)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return 1, 0, written, nil
+}
+
+// transferFileFSStreaming copies fi from srcFS to dstFS in a single streaming pass,
+// computing SHA-256 hashes for both source and destination inline during the copy.
+// This avoids the separate pre-copy source hash read used in the FullChecksum path.
+func (e *Engine) transferFileFSStreaming(ctx context.Context, cfg Config, srcFS, dstFS mountfs.MountFS, fi FileInfo) (int64, error) {
+	if cfg.OnFileCopyStart != nil {
+		cfg.OnFileCopyStart(fi.RelPath)
+	}
+
+	dstDir := pathDir(fi.RelPath)
+	if dstDir != "" && dstDir != "." {
+		if err := dstFS.MkdirAll(dstDir); err != nil {
+			return 0, fmt.Errorf("mkdir: %w", err)
+		}
+	}
+
+	srcFile, err := srcFS.Open(fi.RelPath)
+	if err != nil {
+		return 0, fmt.Errorf("opening source: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := dstFS.Create(fi.RelPath)
+	if err != nil {
+		return 0, fmt.Errorf("creating destination: %w", err)
+	}
+	defer dstFile.Close()
+
+	srcHasher := sha256.New()
+	dstHasher := sha256.New()
+
+	// Single pass: throttled read → tee to src hasher → write to dest file + dest hasher.
+	throttled := newThrottledReader(srcFile, cfg.BandwidthLimitKB, cfg.PauseCh)
+	tee := io.TeeReader(throttled, srcHasher)
+	written, copyErr := io.Copy(io.MultiWriter(dstFile, dstHasher), tee)
+
+	if tr, ok := throttled.(*throttledReader); ok && tr.paused {
+		_ = dstFS.Remove(fi.RelPath)
+		return 0, errMidFilePause
+	}
+	if copyErr != nil {
+		return 0, fmt.Errorf("copying file: %w", copyErr)
+	}
+
+	srcHash := hex.EncodeToString(srcHasher.Sum(nil))
+	dstHash := hex.EncodeToString(dstHasher.Sum(nil))
+	if srcHash != dstHash {
+		return 0, fmt.Errorf("checksum mismatch after transfer: src %s dest %s", srcHash, dstHash)
+	}
+
+	if lfs, ok := dstFS.(*mountfs.LocalFS); ok {
+		_ = lfs.Chtimes(fi.RelPath, fi.ModTime)
+	}
+
+	if err := e.manifest.Put(ctx, &manifest.Entry{
+		JobID:       cfg.JobID,
+		RelPath:     fi.RelPath,
+		SHA256:      srcHash,
+		SizeBytes:   written,
+		ModTime:     fi.ModTime,
+		Permissions: fi.Permissions,
+		SyncedAt:    time.Now(),
+	}); err != nil {
+		return 0, fmt.Errorf("updating manifest: %w", err)
+	}
+
+	return written, nil
+}
+
+// mtimeMatch reports whether two timestamps are equal at 1-second precision.
+// This handles filesystems with coarse mtime resolution (e.g. FAT32 at 2 s,
+// or SFTP servers that truncate sub-second components).
+func mtimeMatch(a, b time.Time) bool {
+	return a.Unix() == b.Unix()
+}
+
 // syncFile is the one-way-backup path: decides whether to copy fi and does so.
 // Returns (filesCopied, filesSkipped, bytesWritten, error).
+// Kept for the local-only two-way engine path.
 func (e *Engine) syncFile(ctx context.Context, cfg Config, fi FileInfo, srcBase, destBase string, snapshot bool) (int, int, int64, error) {
 	srcHash, err := hashFile(fi.AbsPath)
 	if err != nil {
@@ -552,14 +881,9 @@ func checkPause(ctx context.Context, pauseCh <-chan struct{}) (paused bool, ctxE
 	return false, ctx.Err()
 }
 
-func emitProgress(fn func(Progress), done, total int, bytesDone int64, rt *rateTracker) {
+func emitProgress(fn func(Progress), p Progress) {
 	if fn != nil {
-		fn(Progress{
-			FilesDone:  done,
-			FilesTotal: total,
-			BytesDone:  bytesDone,
-			RateKBs:    rt.rate(bytesDone),
-		})
+		fn(p)
 	}
 }
 
@@ -591,6 +915,79 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// hashFSFile computes the SHA-256 hash of relPath within mfs.
+func hashFSFile(mfs mountfs.MountFS, relPath string) (string, error) {
+	f, err := mfs.Open(relPath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// hashFSFileWithPause computes the SHA-256 hash of relPath within mfs,
+// checking pauseCh before each 32 KB chunk. Returns (hash, paused, error).
+// When paused is true the returned hash is empty and no error is set.
+func hashFSFileWithPause(mfs mountfs.MountFS, relPath string, pauseCh <-chan struct{}) (string, bool, error) {
+	f, err := mfs.Open(relPath)
+	if err != nil {
+		return "", false, err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	buf := make([]byte, 32*1024)
+	for {
+		if pauseCh != nil {
+			select {
+			case <-pauseCh:
+				return "", true, nil
+			default:
+			}
+		}
+		n, readErr := f.Read(buf)
+		if n > 0 {
+			h.Write(buf[:n])
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return "", false, readErr
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), false, nil
+}
+
+// copyFSFile copies srcRelPath from srcFS to dstRelPath on dstFS, applying an
+// optional bandwidth limit (KB/s) and honouring pauseCh mid-transfer.
+// Returns bytes written and whether the copy was interrupted by a pause signal.
+func copyFSFile(srcFS, dstFS mountfs.MountFS, srcRelPath, dstRelPath string, bwLimitKBs int64, pauseCh <-chan struct{}) (int64, bool, error) {
+	srcFile, err := srcFS.Open(srcRelPath)
+	if err != nil {
+		return 0, false, err
+	}
+	defer srcFile.Close()
+
+	dstFile, err := dstFS.Create(dstRelPath)
+	if err != nil {
+		return 0, false, err
+	}
+	defer dstFile.Close()
+
+	tr := newThrottledReader(srcFile, bwLimitKBs, pauseCh)
+	written, err := io.Copy(dstFile, tr)
+
+	if tr, ok := tr.(*throttledReader); ok && tr.paused {
+		return written, true, nil
+	}
+	return written, false, err
+}
+
 // copyFile copies src to dst, applying an optional bandwidth limit (KB/s) and
 // honouring pauseCh mid-transfer. Returns bytes written and whether the copy
 // was interrupted by a pause signal.
@@ -614,6 +1011,22 @@ func copyFile(src, dst string, bwLimitKBs int64, pauseCh <-chan struct{}) (int64
 		return written, true, nil
 	}
 	return written, false, err
+}
+
+// pathDir returns the parent directory of a forward-slash relPath.
+// Returns "" if relPath has no parent (i.e. is a top-level file).
+func pathDir(relPath string) string {
+	idx := -1
+	for i := len(relPath) - 1; i >= 0; i-- {
+		if relPath[i] == '/' {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return ""
+	}
+	return relPath[:idx]
 }
 
 // rateTracker computes a smoothed transfer rate.

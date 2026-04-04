@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/robfig/cron/v3"
 	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/db"
 	"github.com/tidemarq/tidemarq/internal/engine"
+	"github.com/tidemarq/tidemarq/internal/mountfs"
+	"github.com/tidemarq/tidemarq/internal/mounts"
 	"github.com/tidemarq/tidemarq/internal/versions"
 	"github.com/tidemarq/tidemarq/internal/watch"
 	"github.com/tidemarq/tidemarq/internal/ws"
@@ -30,11 +33,14 @@ type CreateParams struct {
 	Name             string
 	SourcePath       string
 	DestinationPath  string
+	SourceMountID    *int64
+	DestMountID      *int64
 	Mode             string
 	BandwidthLimitKB int64
 	ConflictStrategy string
 	CronSchedule     string
 	WatchEnabled     bool
+	FullChecksum     bool
 }
 
 // UpdateParams holds the fields that may be updated on a job.
@@ -42,11 +48,14 @@ type UpdateParams struct {
 	Name             string
 	SourcePath       string
 	DestinationPath  string
+	SourceMountID    *int64
+	DestMountID      *int64
 	Mode             string
 	BandwidthLimitKB int64
 	ConflictStrategy string
 	CronSchedule     string
 	WatchEnabled     bool
+	FullChecksum     bool
 }
 
 // runContext tracks an in-progress job run.
@@ -63,6 +72,7 @@ type Service struct {
 	watcher      *watch.Manager
 	versionsSvc  *versions.Service
 	conflictsSvc *conflicts.Service
+	mountsSvc    *mounts.Service // may be nil if mounts feature is disabled
 
 	scheduler *cron.Cron
 
@@ -72,7 +82,7 @@ type Service struct {
 }
 
 // New creates a Service. Call Start to activate scheduling and watching.
-func New(database *db.DB, eng *engine.Engine, hub *ws.Hub, watcher *watch.Manager, versionsSvc *versions.Service, conflictsSvc *conflicts.Service) *Service {
+func New(database *db.DB, eng *engine.Engine, hub *ws.Hub, watcher *watch.Manager, versionsSvc *versions.Service, conflictsSvc *conflicts.Service, mountsSvc *mounts.Service) *Service {
 	return &Service{
 		db:           database,
 		engine:       eng,
@@ -80,6 +90,7 @@ func New(database *db.DB, eng *engine.Engine, hub *ws.Hub, watcher *watch.Manage
 		watcher:      watcher,
 		versionsSvc:  versionsSvc,
 		conflictsSvc: conflictsSvc,
+		mountsSvc:    mountsSvc,
 		scheduler:    cron.New(),
 		running:      make(map[int64]*runContext),
 		cronIDs:      make(map[int64]cron.EntryID),
@@ -116,8 +127,16 @@ func (s *Service) Stop() {
 
 // Create inserts a new job, registers its triggers, and returns it.
 func (s *Service) Create(ctx context.Context, p CreateParams) (*db.Job, error) {
-	if p.Name == "" || p.SourcePath == "" || p.DestinationPath == "" {
-		return nil, errors.New("name, source_path, and destination_path are required")
+	// Source and destination paths are required for local FS jobs.
+	// For mount-based jobs, the path is the sub-path within the mount (may be empty for mount root).
+	if p.Name == "" {
+		return nil, errors.New("name is required")
+	}
+	if p.SourceMountID == nil && p.SourcePath == "" {
+		return nil, errors.New("source_path is required for local filesystem jobs")
+	}
+	if p.DestMountID == nil && p.DestinationPath == "" {
+		return nil, errors.New("destination_path is required for local filesystem jobs")
 	}
 	if !validMode(p.Mode) {
 		return nil, fmt.Errorf("invalid mode %q: must be one-way-backup, one-way-mirror, or two-way", p.Mode)
@@ -131,11 +150,14 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*db.Job, error) {
 		Name:             p.Name,
 		SourcePath:       p.SourcePath,
 		DestinationPath:  p.DestinationPath,
+		SourceMountID:    p.SourceMountID,
+		DestMountID:      p.DestMountID,
 		Mode:             p.Mode,
 		BandwidthLimitKB: p.BandwidthLimitKB,
 		ConflictStrategy: p.ConflictStrategy,
 		CronSchedule:     p.CronSchedule,
 		WatchEnabled:     p.WatchEnabled,
+		FullChecksum:     p.FullChecksum,
 	})
 	if err != nil {
 		return nil, err
@@ -162,8 +184,14 @@ func (s *Service) List(ctx context.Context) ([]*db.Job, error) {
 
 // Update applies p to the job, re-registers triggers, and returns the updated job.
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (*db.Job, error) {
-	if p.Name == "" || p.SourcePath == "" || p.DestinationPath == "" {
-		return nil, errors.New("name, source_path, and destination_path are required")
+	if p.Name == "" {
+		return nil, errors.New("name is required")
+	}
+	if p.SourceMountID == nil && p.SourcePath == "" {
+		return nil, errors.New("source_path is required for local filesystem jobs")
+	}
+	if p.DestMountID == nil && p.DestinationPath == "" {
+		return nil, errors.New("destination_path is required for local filesystem jobs")
 	}
 	if !validMode(p.Mode) {
 		return nil, fmt.Errorf("invalid mode %q", p.Mode)
@@ -178,11 +206,14 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (*db.Job
 		Name:             p.Name,
 		SourcePath:       p.SourcePath,
 		DestinationPath:  p.DestinationPath,
+		SourceMountID:    p.SourceMountID,
+		DestMountID:      p.DestMountID,
 		Mode:             p.Mode,
 		BandwidthLimitKB: p.BandwidthLimitKB,
 		ConflictStrategy: p.ConflictStrategy,
 		CronSchedule:     p.CronSchedule,
 		WatchEnabled:     p.WatchEnabled,
+		FullChecksum:     p.FullChecksum,
 	})
 	if errors.Is(err, db.ErrNotFound) {
 		return nil, ErrNotFound
@@ -253,6 +284,30 @@ func (s *Service) Resume(ctx context.Context, id int64) error {
 	return s.Run(ctx, id)
 }
 
+// openJobFS opens the source and destination MountFS for a job.
+// Returns nil, nil for local paths. The caller must close any non-nil FS when done.
+func (s *Service) openJobFS(ctx context.Context, job *db.Job) (srcFS, dstFS mountfs.MountFS, err error) {
+	if s.mountsSvc == nil {
+		return nil, nil, nil
+	}
+	if job.SourceMountID != nil {
+		srcFS, err = s.mountsSvc.OpenAt(ctx, *job.SourceMountID, job.SourcePath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("opening source mount: %w", err)
+		}
+	}
+	if job.DestMountID != nil {
+		dstFS, err = s.mountsSvc.OpenAt(ctx, *job.DestMountID, job.DestinationPath)
+		if err != nil {
+			if srcFS != nil {
+				srcFS.Close()
+			}
+			return nil, nil, fmt.Errorf("opening destination mount: %w", err)
+		}
+	}
+	return srcFS, dstFS, nil
+}
+
 // execRun is the goroutine body for a single job execution.
 func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{}, cancel context.CancelFunc) {
 	defer cancel()
@@ -265,34 +320,81 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 	_ = s.db.UpdateJobStatus(ctx, job.ID, "running", nil, false)
 	s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "started"})
 
-	filesTotal := 0 // updated lazily on first progress call
+	// Open mount FS connections if the job uses network mounts.
+	srcFS, dstFS, fsErr := s.openJobFS(ctx, job)
+	if fsErr != nil {
+		msg := fsErr.Error()
+		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "error", &msg, true)
+		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
+		return
+	}
+	if srcFS != nil {
+		defer srcFS.Close()
+	}
+	if dstFS != nil {
+		defer dstFS.Close()
+	}
+
+	// Rate-limit "scanning" events to at most 10 per second.
+	var (
+		lastScanEventMu sync.Mutex
+		lastScanEvent   time.Time
+	)
+
 	result, runErr := s.engine.Run(ctx, engine.Config{
 		JobID:            job.ID,
 		Mode:             job.Mode,
 		ConflictStrategy: job.ConflictStrategy,
 		SourcePath:       job.SourcePath,
 		DestinationPath:  job.DestinationPath,
+		SourceFS:         srcFS,
+		DestFS:           dstFS,
 		BandwidthLimitKB: job.BandwidthLimitKB,
+		FullChecksum:     job.FullChecksum,
 		PauseCh:          pauseCh,
 		VersionsSvc:      s.versionsSvc,
 		ConflictsSvc:     s.conflictsSvc,
-		OnProgress: func(p engine.Progress) {
-			if filesTotal == 0 {
-				filesTotal = p.FilesTotal
+		OnFileStart: func(relPath string) {
+			lastScanEventMu.Lock()
+			defer lastScanEventMu.Unlock()
+			if time.Since(lastScanEvent) < 100*time.Millisecond {
+				return
 			}
+			lastScanEvent = time.Now()
+			s.hub.Broadcast(ws.Event{
+				JobID:       job.ID,
+				Event:       "progress",
+				CurrentFile: relPath,
+				FileAction:  "scanning",
+			})
+		},
+		// OnFileCopyStart fires when bytes are about to move. Not throttled —
+		// copies are infrequent and the user needs to see this immediately.
+		OnFileCopyStart: func(relPath string) {
+			s.hub.Broadcast(ws.Event{
+				JobID:       job.ID,
+				Event:       "progress",
+				CurrentFile: relPath,
+				FileAction:  "copying",
+			})
+		},
+		OnProgress: func(p engine.Progress) {
 			eta := 0
 			if p.RateKBs > 0 && p.BytesDone > 0 && p.FilesTotal > p.FilesDone {
 				remaining := int64(p.FilesTotal-p.FilesDone) * (p.BytesDone / int64(p.FilesDone+1))
 				eta = int(float64(remaining) / 1024 / p.RateKBs)
 			}
 			s.hub.Broadcast(ws.Event{
-				JobID:      job.ID,
-				Event:      "progress",
-				FilesDone:  p.FilesDone,
-				FilesTotal: p.FilesTotal,
-				BytesDone:  p.BytesDone,
-				RateKBs:    p.RateKBs,
-				ETASecs:    eta,
+				JobID:        job.ID,
+				Event:        "progress",
+				FilesDone:    p.FilesDone,
+				FilesTotal:   p.FilesTotal,
+				FilesSkipped: p.FilesSkipped,
+				BytesDone:    p.BytesDone,
+				RateKBs:      p.RateKBs,
+				ETASecs:      eta,
+				CurrentFile:  p.CurrentFile,
+				FileAction:   p.FileAction,
 			})
 		},
 	})

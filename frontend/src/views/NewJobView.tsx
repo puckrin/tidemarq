@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Check, ArrowLeft, ArrowRight } from 'lucide-react'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
-import { createJob, updateJob, getJob } from '../api/client'
+import { createJob, updateJob, getJob, listMounts } from '../api/client'
 import { Button } from '../components/Button'
+import { PathPicker } from '../components/PathPicker'
 import { useToast } from '../components/Toast'
-import type { Job } from '../api/types'
+import type { Job, Mount } from '../api/types'
 import type { View } from '../components/Sidebar'
+import type { PathValue } from '../components/PathPicker'
 
 interface Props {
   onNav: (v: View, id?: number) => void
@@ -16,37 +18,49 @@ type Step = 1 | 2 | 3 | 4 | 5
 
 interface FormState {
   name: string
-  source_path: string
-  destination_path: string
+  source: PathValue
+  dest: PathValue
   mode: Job['mode']
   conflict_strategy: Job['conflict_strategy']
   watch_enabled: boolean
   cron_schedule: string
   bandwidth_limit_kb: number
+  full_checksum: boolean
 }
 
 const INIT: FormState = {
   name: '',
-  source_path: '',
-  destination_path: '',
+  source: { path: '', mountId: null },
+  dest:   { path: '', mountId: null },
   mode: 'one-way-backup',
   conflict_strategy: 'ask-user',
   watch_enabled: true,
   cron_schedule: '',
   bandwidth_limit_kb: 0,
+  full_checksum: false,
 }
 
 function jobToForm(j: Job): FormState {
   return {
     name:               j.name,
-    source_path:        j.source_path,
-    destination_path:   j.destination_path,
+    source:             { path: j.source_path,      mountId: j.source_mount_id ?? null },
+    dest:               { path: j.destination_path, mountId: j.dest_mount_id   ?? null },
     mode:               j.mode,
     conflict_strategy:  j.conflict_strategy,
     watch_enabled:      j.watch_enabled,
     cron_schedule:      j.cron_schedule ?? '',
     bandwidth_limit_kb: j.bandwidth_limit_kb,
+    full_checksum:      j.full_checksum,
   }
+}
+
+function pathLabel(pv: PathValue, mounts: Mount[]): string {
+  if (pv.mountId != null) {
+    const mount = mounts.find(m => m.id === pv.mountId)
+    const label = mount ? mount.name : `Mount ${pv.mountId}`
+    return `[${label}]${pv.path ? ` ${pv.path}` : ' /'}`
+  }
+  return pv.path || '—'
 }
 
 const MODE_OPTIONS: { value: Job['mode']; title: string; desc: string }[] = [
@@ -84,6 +98,13 @@ export function NewJobView({ onNav, editJobId }: Props) {
   const [form, setForm]       = useState<FormState>(INIT)
   const [ready, setReady]     = useState(!isEdit)   // false until existing job loaded
 
+  // Mounts list for name lookup in labels
+  const { data: mounts = [] } = useQuery({
+    queryKey: ['mounts'],
+    queryFn:  listMounts,
+    staleTime: 60_000,
+  })
+
   // Load existing job when editing
   const { data: existingJob } = useQuery({
     queryKey: ['job', editJobId],
@@ -99,31 +120,25 @@ export function NewJobView({ onNav, editJobId }: Props) {
     }
   }, [existingJob, ready])
 
-  const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
-    setForm(f => ({ ...f, [k]: v }))
+  const set = (updates: Partial<FormState>) => setForm(f => ({ ...f, ...updates }))
 
   const save = useMutation({
-    mutationFn: () => isEdit
-      ? updateJob(editJobId!, {
-          name:               form.name,
-          source_path:        form.source_path,
-          destination_path:   form.destination_path,
-          mode:               form.mode,
-          conflict_strategy:  form.conflict_strategy,
-          watch_enabled:      form.watch_enabled,
-          cron_schedule:      form.cron_schedule,
-          bandwidth_limit_kb: form.bandwidth_limit_kb,
-        })
-      : createJob({
-          name:               form.name,
-          source_path:        form.source_path,
-          destination_path:   form.destination_path,
-          mode:               form.mode,
-          conflict_strategy:  form.conflict_strategy,
-          watch_enabled:      form.watch_enabled,
-          cron_schedule:      form.cron_schedule,
-          bandwidth_limit_kb: form.bandwidth_limit_kb,
-        }),
+    mutationFn: () => {
+      const payload = {
+        name:               form.name,
+        source_path:        form.source.path,
+        destination_path:   form.dest.path,
+        source_mount_id:    form.source.mountId ?? undefined,
+        dest_mount_id:      form.dest.mountId ?? undefined,
+        mode:               form.mode,
+        conflict_strategy:  form.conflict_strategy,
+        watch_enabled:      form.watch_enabled,
+        cron_schedule:      form.cron_schedule,
+        bandwidth_limit_kb: form.bandwidth_limit_kb,
+        full_checksum:      form.full_checksum,
+      }
+      return isEdit ? updateJob(editJobId!, payload) : createJob(payload)
+    },
     onSuccess: (job) => {
       qc.invalidateQueries({ queryKey: ['jobs'] })
       qc.invalidateQueries({ queryKey: ['job', job.id] })
@@ -200,18 +215,18 @@ export function NewJobView({ onNav, editJobId }: Props) {
                 className="fi"
                 placeholder="e.g. Documents → NAS Backup"
                 value={form.name}
-                onChange={e => set('name', e.target.value)}
+                onChange={e => set({ name: e.target.value })}
               />
             </div>
             <div className="fg" style={{ marginBottom: 0 }}>
-              <label className="fl">Source path</label>
-              <input
-                className="fi mono"
-                style={{ fontSize: 13 }}
-                placeholder="/home/user/Documents"
-                value={form.source_path}
-                onChange={e => set('source_path', e.target.value)}
+              <PathPicker
+                label="Source"
+                value={form.source}
+                onChange={source => set({ source })}
               />
+              <div className="fhint">
+                Select a local folder or a configured network mount, then browse to the directory.
+              </div>
             </div>
           </div>
         )}
@@ -219,7 +234,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
         {/* Step 2 — Destination */}
         {step === 2 && (
           <>
-            {form.source_path && (
+            {(form.source.path || form.source.mountId != null) && (
               <div className="card mb16">
                 <div className="card-title mb16">
                   Step 1 — Source{' '}
@@ -228,21 +243,24 @@ export function NewJobView({ onNav, editJobId }: Props) {
                   </span>
                 </div>
                 <div className="mono fs12 text2" style={{ padding: '10px 12px', background: 'var(--input-bg)', borderRadius: 'var(--radius)', border: '1px solid var(--input-border)' }}>
-                  {form.source_path}
+                  {pathLabel(form.source, mounts)}
                 </div>
               </div>
             )}
             <div className="card mb16">
               <div className="card-title mb16">Step 2 — Destination</div>
               <div className="fg" style={{ marginBottom: 0 }}>
-                <label className="fl">Destination path</label>
-                <input
-                  className="fi mono"
-                  style={{ fontSize: 13 }}
-                  placeholder="/mnt/backup or \\server\share"
-                  value={form.destination_path}
-                  onChange={e => set('destination_path', e.target.value)}
+                <PathPicker
+                  label="Destination"
+                  value={form.dest}
+                  onChange={dest => set({ dest })}
                 />
+                <div className="fhint">
+                  Select where synced files will be written.
+                  {form.mode !== 'two-way' && form.dest.mountId != null
+                    ? ' Two-way sync is not available with network mounts.'
+                    : ''}
+                </div>
               </div>
             </div>
           </>
@@ -253,23 +271,28 @@ export function NewJobView({ onNav, editJobId }: Props) {
           <div className="card mb16">
             <div className="card-title mb16">Step 3 — Sync Mode</div>
             <div className="mode-cards">
-              {MODE_OPTIONS.map(m => (
-                <div
-                  key={m.value}
-                  className={`mode-card${form.mode === m.value ? ' sel' : ''}`}
-                  onClick={() => set('mode', m.value)}
-                >
-                  <div className="mc-title">{m.title}</div>
-                  <div className="mc-desc">{m.desc}</div>
-                </div>
-              ))}
+              {MODE_OPTIONS.map(m => {
+                const mountsSelected = form.source.mountId != null || form.dest.mountId != null
+                const disabled = mountsSelected && m.value === 'two-way'
+                return (
+                  <div
+                    key={m.value}
+                    className={`mode-card${form.mode === m.value ? ' sel' : ''}${disabled ? ' disabled' : ''}`}
+                    style={disabled ? { opacity: 0.45, cursor: 'not-allowed' } : {}}
+                    onClick={() => !disabled && set({ mode: m.value })}
+                  >
+                    <div className="mc-title">{m.title}</div>
+                    <div className="mc-desc">{m.desc}{disabled ? ' (not available with network mounts)' : ''}</div>
+                  </div>
+                )
+              })}
             </div>
             <div className="fg" style={{ marginBottom: 0, marginTop: 8 }}>
               <label className="fl">Conflict strategy</label>
               <select
                 className="fs"
                 value={form.conflict_strategy}
-                onChange={e => set('conflict_strategy', e.target.value as Job['conflict_strategy'])}
+                onChange={e => set({ conflict_strategy: e.target.value as Job['conflict_strategy'] })}
               >
                 {STRATEGY_OPTIONS.map(o => (
                   <option key={o.value} value={o.value}>{o.label}</option>
@@ -290,7 +313,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
                   <input
                     type="checkbox"
                     checked={form.watch_enabled}
-                    onChange={e => set('watch_enabled', e.target.checked)}
+                    onChange={e => set({ watch_enabled: e.target.checked })}
                   />
                   <span className="tog-sl"/>
                 </label>
@@ -306,7 +329,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
                   style={{ maxWidth: 200, fontSize: 13 }}
                   placeholder="0 2 * * *"
                   value={form.cron_schedule}
-                  onChange={e => set('cron_schedule', e.target.value)}
+                  onChange={e => set({ cron_schedule: e.target.value })}
                 />
                 <div className="fhint">
                   Leave blank to disable scheduled runs. Example: <code>0 2 * * *</code> = daily at 02:00
@@ -320,8 +343,35 @@ export function NewJobView({ onNav, editJobId }: Props) {
                   type="number"
                   min={0}
                   value={form.bandwidth_limit_kb}
-                  onChange={e => set('bandwidth_limit_kb', Number(e.target.value))}
+                  onChange={e => set({ bandwidth_limit_kb: Number(e.target.value) })}
                 />
+              </div>
+              <div className="flex gap12" style={{ alignItems: 'flex-start' }}>
+                <label className="toggle" style={{ marginTop: 3 }}>
+                  <input
+                    type="checkbox"
+                    checked={form.full_checksum}
+                    onChange={e => set({ full_checksum: e.target.checked })}
+                  />
+                  <span className="tog-sl"/>
+                </label>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>Full SHA-256 verification</div>
+                  <div className="fs12 text2" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span>
+                      By default, repeat runs are fast: unchanged files are detected by comparing size
+                      and modification time and are skipped without reading their contents.
+                      {' '}<strong>The first run always reads and copies everything</strong>{' '}
+                      to build a baseline — the speed benefit applies to subsequent runs only.
+                    </span>
+                    <span>
+                      Enable this if your source filesystem has unreliable timestamps (some SMB shares,
+                      FAT32 volumes). When on, every source file is read and hashed on every run regardless
+                      of whether it appears unchanged —
+                      <span style={{ color: 'var(--coral-light)', fontWeight: 500 }}> every run will be as slow as the first.</span>
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -339,13 +389,14 @@ export function NewJobView({ onNav, editJobId }: Props) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13 }}>
               {([
                 ['Name',             form.name || '—'],
-                ['Source',           <span className="mono fs12">{form.source_path || '—'}</span>],
-                ['Destination',      <span className="mono fs12">{form.destination_path || '—'}</span>],
+                ['Source',           <span className="mono fs12">{pathLabel(form.source, mounts)}</span>],
+                ['Destination',      <span className="mono fs12">{pathLabel(form.dest, mounts)}</span>],
                 ['Mode',             form.mode.replace(/-/g, ' ')],
                 ['Conflict strategy',form.conflict_strategy.replace(/-/g, ' ')],
                 ['FS watch',         form.watch_enabled ? 'Enabled' : 'Disabled'],
                 ['Cron schedule',    form.cron_schedule || 'None'],
                 ['Bandwidth limit',  form.bandwidth_limit_kb > 0 ? `${form.bandwidth_limit_kb} KB/s` : 'Unlimited'],
+                ['Full SHA-256',     form.full_checksum ? 'Yes (slower, reads every file)' : 'No (metadata fast-path)'],
               ] as [string, React.ReactNode][]).map(([label, val]) => (
                 <div key={label} className="flex gap8">
                   <span className="text3 fw5" style={{ minWidth: 160 }}>{label}</span>
@@ -361,5 +412,3 @@ export function NewJobView({ onNav, editJobId }: Props) {
     </div>
   )
 }
-
-import React from 'react'

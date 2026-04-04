@@ -72,8 +72,8 @@ func newTestServer(t *testing.T) (*httptest.Server, string) {
 		t.Fatalf("watch.New: %v", err)
 	}
 	t.Cleanup(watcher.Close)
-	jobsSvc := jobs.New(database, syncEngine, hub, watcher, nil, nil)
-	srv := api.NewServer(cfg, database, authSvc, jobsSvc, hub, nil, nil)
+	jobsSvc := jobs.New(database, syncEngine, hub, watcher, nil, nil, nil)
+	srv := api.NewServer(cfg, database, authSvc, jobsSvc, hub, nil, nil, nil, nil, nil)
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 
@@ -402,13 +402,13 @@ func newFullTestServer(t *testing.T) (*httptest.Server, string, string, string) 
 	vSvc := versions.New(database, versionsDir, quarantineDir, 30)
 	cSvc := conflicts.New(database)
 
-	jobsSvc := jobs.New(database, syncEngine, hub, watcher, vSvc, cSvc)
+	jobsSvc := jobs.New(database, syncEngine, hub, watcher, vSvc, cSvc, nil)
 	if err := jobsSvc.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(jobsSvc.Stop)
 
-	srv := api.NewServer(cfg, database, authSvc, jobsSvc, hub, cSvc, vSvc)
+	srv := api.NewServer(cfg, database, authSvc, jobsSvc, hub, cSvc, vSvc, nil, nil, nil)
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
 
