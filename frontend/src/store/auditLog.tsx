@@ -21,9 +21,8 @@ const Ctx = createContext<AuditLogContext | null>(null)
 
 let nextId = 0
 
-const EVENT_LABELS: Record<WsEvent['event'], string> = {
+const EVENT_LABELS: Record<Exclude<WsEvent['event'], 'progress'>, string> = {
   started:   'Job started',
-  progress:  'Job in progress',
   paused:    'Job stopped',
   completed: 'Job completed',
   error:     'Job error',
@@ -32,9 +31,6 @@ const EVENT_LABELS: Record<WsEvent['event'], string> = {
 function wsEventToEntry(e: WsEvent, jobName: string): LogEntry {
   const type = e.event === 'error' ? 'error' : e.event === 'paused' ? 'info' : 'sync'
   let detail: string | undefined
-  if (e.event === 'progress' && e.files_total) {
-    detail = `${e.files_done ?? 0} / ${e.files_total} files · ${e.rate_kbs ? (e.rate_kbs / 1024).toFixed(1) + ' MB/s' : '—'}`
-  }
   if (e.event === 'error' && e.message) detail = e.message
   if (e.event === 'completed' && e.files_done != null) detail = `${e.files_done} files processed`
 
@@ -44,7 +40,7 @@ function wsEventToEntry(e: WsEvent, jobName: string): LogEntry {
     jobId:   e.job_id,
     jobName,
     type,
-    message: EVENT_LABELS[e.event],
+    message: EVENT_LABELS[e.event as Exclude<WsEvent['event'], 'progress'>],
     detail,
   }
 }
@@ -58,18 +54,14 @@ export function AuditLogProvider({ children, jobNames }: Props) {
   const [entries, setEntries] = useState<LogEntry[]>([])
 
   const add = useCallback((entry: LogEntry) => {
-    setEntries(prev => {
-      // Deduplicate rapid progress events — keep at most one 'progress' per job
-      if (entry.message === 'Job in progress') {
-        const filtered = prev.filter(e => !(e.jobId === entry.jobId && e.message === 'Job in progress'))
-        return [entry, ...filtered].slice(0, 500)
-      }
-      return [entry, ...prev].slice(0, 500)
-    })
+    setEntries(prev => [entry, ...prev].slice(0, 500))
   }, [])
 
   useEffect(() => {
     const unsub = wsClient.subscribe((e: WsEvent) => {
+      // Only record lifecycle events — progress events are too frequent and
+      // belong in the live job panel, not the audit log.
+      if (e.event === 'progress') return
       const name = jobNames[e.job_id] ?? `Job #${e.job_id}`
       add(wsEventToEntry(e, name))
     })

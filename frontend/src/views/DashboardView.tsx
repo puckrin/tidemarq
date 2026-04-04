@@ -1,4 +1,4 @@
-import { RefreshCw, CheckCircle2, AlertCircle, HardDrive, Check, X, GitMerge, Square } from 'lucide-react'
+import { RefreshCw, CheckCircle2, AlertCircle, HardDrive, Check, X, GitMerge, Square, Plus } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { listJobs, listConflicts } from '../api/client'
 import { StatCard } from '../components/StatCard'
@@ -68,7 +68,7 @@ export function DashboardView({ onNav }: Props) {
         <div className="page-title">Dashboard</div>
         <div className="mla">
           <Button variant="primary" onClick={() => onNav('new-job')}>
-            <RefreshCw size={14} /> New Job
+            <Plus size={14} /> New Job
           </Button>
         </div>
       </div>
