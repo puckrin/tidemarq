@@ -24,7 +24,7 @@ let nextId = 0
 const EVENT_LABELS: Record<WsEvent['event'], string> = {
   started:   'Job started',
   progress:  'Job in progress',
-  paused:    'Job paused',
+  paused:    'Job stopped',
   completed: 'Job completed',
   error:     'Job error',
 }

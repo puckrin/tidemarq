@@ -49,6 +49,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (token) wsClient.connect()
     else wsClient.disconnect()
+    // Return disconnect as cleanup so React StrictMode's double-invoke doesn't
+    // leave a zombie WebSocket open alongside the real one. Both connections
+    // would share the same listeners Set, causing every WS event to fire twice.
+    return () => wsClient.disconnect()
   }, [token])
 
   const login = async (username: string, password: string) => {

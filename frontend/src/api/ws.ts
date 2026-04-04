@@ -11,6 +11,13 @@ class WsClient {
 
   async connect() {
     this.stopped = false
+    // Close any existing connection before opening a new one so stale sockets
+    // don't accumulate and share the listeners Set.
+    if (this.ws) {
+      this.ws.onclose = null // suppress the reconnect scheduler on this close
+      this.ws.close()
+      this.ws = null
+    }
     try {
       const { token } = await getWsToken()
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'

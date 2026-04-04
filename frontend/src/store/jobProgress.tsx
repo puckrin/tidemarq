@@ -75,7 +75,7 @@ export function JobProgressProvider({ children }: { children: React.ReactNode })
       // Events that only tick the progress counter have no current_file set, so the
       // guard on e.current_file naturally excludes them without needing string checks.
       let newRecentFiles = existing.recentFiles
-      if (e.current_file && e.file_action && e.file_action !== 'scanning') {
+      if (e.current_file && (e.file_action === 'copied' || e.file_action === 'skipped' || e.file_action === 'removing')) {
         const entry: FileActivity = { relPath: e.current_file, action: e.file_action, ts: Date.now() }
         newRecentFiles = [entry, ...existing.recentFiles].slice(0, 50)
       }
@@ -91,10 +91,10 @@ export function JobProgressProvider({ children }: { children: React.ReactNode })
         // Completion events ('copied', 'skipped', 'removing') only feed the
         // activity list — they do not disturb the indicator so it stays visible
         // showing the last known in-progress file until the next one starts.
-        currentFile:   (e.file_action === 'scanning' || e.file_action === 'copying')
+        currentFile:   (e.file_action === 'scanning' || e.file_action === 'copying' || e.file_action === 'removing')
           ? (e.current_file ?? existing.currentFile)
           : existing.currentFile,
-        currentAction: (e.file_action === 'scanning' || e.file_action === 'copying')
+        currentAction: (e.file_action === 'scanning' || e.file_action === 'copying' || e.file_action === 'removing')
           ? e.file_action
           : existing.currentAction,
         recentFiles:  newRecentFiles,

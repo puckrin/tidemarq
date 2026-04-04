@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Pause, Play, Trash2, Pencil, FileCheck, FileCog, FileX } from 'lucide-react'
+import { Square, Play, Trash2, Pencil, FileCheck, FileCog, FileX } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getJob, runJob, pauseJob, resumeJob, deleteJob } from '../api/client'
 import { Badge } from '../components/Badge'
@@ -19,7 +19,7 @@ function statusBadge(s: Job['status']) {
     running:'running', idle:'synced', paused:'pending', error:'error', disabled:'disabled',
   }
   const labels: Record<Job['status'], string> = {
-    running:'Running', idle:'Synced', paused:'Paused', error:'Error', disabled:'Disabled',
+    running:'Running', idle:'Synced', paused:'Stopped', error:'Error', disabled:'Disabled',
   }
   return <Badge variant={map[s]}>{labels[s]}</Badge>
 }
@@ -67,8 +67,8 @@ export function JobDetailView({ jobId, onNav }: Props) {
   const progress = useJobProgress(jobId)
 
   const run    = useMutation({ mutationFn: () => runJob(jobId),    onSuccess: () => { qc.invalidateQueries({queryKey:['job',jobId]}); toast('Job started.','ok') } })
-  const pause  = useMutation({ mutationFn: () => pauseJob(jobId),  onSuccess: () => { qc.invalidateQueries({queryKey:['job',jobId]}); toast('Job paused.','info') } })
-  const resume = useMutation({ mutationFn: () => resumeJob(jobId), onSuccess: () => { qc.invalidateQueries({queryKey:['job',jobId]}); toast('Job resumed.','ok') } })
+  const pause  = useMutation({ mutationFn: () => pauseJob(jobId),  onSuccess: () => { qc.invalidateQueries({queryKey:['job',jobId]}); toast('Job stopped.','info') } })
+  const resume = useMutation({ mutationFn: () => resumeJob(jobId), onSuccess: () => { qc.invalidateQueries({queryKey:['job',jobId]}); toast('Job restarted.','ok') } })
   const del    = useMutation({ mutationFn: () => deleteJob(jobId), onSuccess: () => { qc.invalidateQueries({queryKey:['jobs']}); toast('Job deleted.','ok'); onNav('jobs') } })
 
   if (!job) return <div className="text3" style={{ padding: 24 }}>Loading…</div>
@@ -99,10 +99,10 @@ export function JobDetailView({ jobId, onNav }: Props) {
         </div>
         <div className="flex gap8">
           {job.status === 'running' && (
-            <Button variant="secondary" onClick={() => pause.mutate()}><Pause size={14}/> Pause</Button>
+            <Button variant="secondary" onClick={() => pause.mutate()}><Square size={14}/> Stop</Button>
           )}
           {job.status === 'paused' && (
-            <Button variant="secondary" onClick={() => resume.mutate()}><Play size={14}/> Resume</Button>
+            <Button variant="secondary" onClick={() => resume.mutate()}><Play size={14}/> Restart</Button>
           )}
           {(job.status === 'idle' || job.status === 'error') && (
             <Button variant="secondary" onClick={() => run.mutate()}><Play size={14}/> Run now</Button>
@@ -120,20 +120,20 @@ export function JobDetailView({ jobId, onNav }: Props) {
               {isRunning
                 ? <Badge variant="running">Running</Badge>
                 : <Badge variant={progress.lastEvent === 'completed' ? 'synced' : progress.lastEvent === 'paused' ? 'pending' : 'error'}>
-                    {progress.lastEvent === 'completed' ? 'Completed' : progress.lastEvent === 'paused' ? 'Paused' : progress.lastEvent === 'error' ? 'Error' : 'Running'}
+                    {progress.lastEvent === 'completed' ? 'Completed' : progress.lastEvent === 'paused' ? 'Stopped' : progress.lastEvent === 'error' ? 'Error' : 'Running'}
                   </Badge>
               }
             </div>
             {isRunning && (
-              <Button variant="ghost" size="sm" onClick={() => pause.mutate()}>Pause</Button>
+              <Button variant="ghost" size="sm" onClick={() => pause.mutate()}>Stop</Button>
             )}
           </div>
 
           <ProgressBar pct={pct} height={8} />
 
-          {/* Current file indicator — shows during scanning (evaluating) and copying (bytes moving).
-              Stays visible between files, showing the last known in-progress state. */}
-          {(progress.currentAction === 'scanning' || progress.currentAction === 'copying') && progress.currentFile && (
+          {/* Current file indicator — shows during scanning (evaluating), copying (bytes moving),
+              and removing (quarantine/delete). Stays visible between files. */}
+          {(progress.currentAction === 'scanning' || progress.currentAction === 'copying' || progress.currentAction === 'removing') && progress.currentFile && (
             <div style={{
               marginTop: 8,
               fontSize: 12,
@@ -143,8 +143,8 @@ export function JobDetailView({ jobId, onNav }: Props) {
               gap: 6,
               overflow: 'hidden',
             }}>
-              <span style={{ color: 'var(--text3)', flexShrink: 0 }}>
-                {progress.currentAction === 'copying' ? 'Copying:' : 'Scanning:'}
+              <span style={{ color: progress.currentAction === 'removing' ? 'var(--coral-light)' : 'var(--text3)', flexShrink: 0 }}>
+                {progress.currentAction === 'copying' ? 'Copying:' : progress.currentAction === 'removing' ? 'Removing:' : 'Scanning:'}
               </span>
               <span className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {progress.currentFile}

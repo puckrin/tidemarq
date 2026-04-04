@@ -1,4 +1,4 @@
-import { RefreshCw, CheckCircle2, AlertCircle, HardDrive, Check, X, GitMerge, Pause } from 'lucide-react'
+import { RefreshCw, CheckCircle2, AlertCircle, HardDrive, Check, X, GitMerge, Square } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { listJobs, listConflicts } from '../api/client'
 import { StatCard } from '../components/StatCard'
@@ -19,7 +19,7 @@ function statusBadge(s: Job['status']) {
     running: 'running', idle: 'synced', paused: 'pending', error: 'error', disabled: 'disabled',
   }
   const labels: Record<Job['status'], string> = {
-    running: 'Running', idle: 'Synced', paused: 'Paused', error: 'Error', disabled: 'Disabled',
+    running: 'Running', idle: 'Synced', paused: 'Stopped', error: 'Error', disabled: 'Disabled',
   }
   return <Badge variant={map[s]}>{labels[s]}</Badge>
 }
@@ -88,7 +88,7 @@ export function DashboardView({ onNav }: Props) {
             <div key={j.id} className="act-item" style={{ cursor: 'pointer' }} onClick={() => onNav('job-detail', j.id)}>
               <div className={`act-icon ${j.status === 'error' ? 'ai-err' : j.status === 'paused' ? 'ai-info' : 'ai-ok'}`}>
                 {j.status === 'error'  ? <X size={13}/> :
-                 j.status === 'paused' ? <Pause size={13}/> :
+                 j.status === 'paused' ? <Square size={13}/> :
                  <Check size={13}/>}
               </div>
               <div className="act-body">

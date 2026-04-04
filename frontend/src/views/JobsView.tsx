@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Play, Pause, Pencil, Trash2, RefreshCw, Search } from 'lucide-react'
+import { Plus, Play, Square, Pencil, Trash2, RefreshCw, Search } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { listJobs, runJob, pauseJob, resumeJob, deleteJob } from '../api/client'
 import { Badge } from '../components/Badge'
@@ -20,7 +20,7 @@ function statusBadge(s: Job['status']) {
     running: 'running', idle: 'synced', paused: 'pending', error: 'error', disabled: 'disabled',
   }
   const labels: Record<Job['status'], string> = {
-    running: 'Running', idle: 'Synced', paused: 'Paused', error: 'Error', disabled: 'Disabled',
+    running: 'Running', idle: 'Synced', paused: 'Stopped', error: 'Error', disabled: 'Disabled',
   }
   return <Badge variant={map[s]}>{labels[s]}</Badge>
 }
@@ -56,8 +56,8 @@ export function JobsView({ onNav }: Props) {
   const { data: jobs = [] } = useQuery({ queryKey: ['jobs'], queryFn: listJobs, refetchInterval: 5000 })
 
   const run    = useMutation({ mutationFn: runJob,    onSuccess: () => { qc.invalidateQueries({queryKey:['jobs']}); toast('Job queued.','ok') } })
-  const pause  = useMutation({ mutationFn: pauseJob,  onSuccess: () => { qc.invalidateQueries({queryKey:['jobs']}); toast('Job paused.','info') } })
-  const resume = useMutation({ mutationFn: resumeJob, onSuccess: () => { qc.invalidateQueries({queryKey:['jobs']}); toast('Job resumed.','ok') } })
+  const pause  = useMutation({ mutationFn: pauseJob,  onSuccess: () => { qc.invalidateQueries({queryKey:['jobs']}); toast('Job stopped.','info') } })
+  const resume = useMutation({ mutationFn: resumeJob, onSuccess: () => { qc.invalidateQueries({queryKey:['jobs']}); toast('Job restarted.','ok') } })
   const del    = useMutation({ mutationFn: deleteJob, onSuccess: () => { qc.invalidateQueries({queryKey:['jobs']}); toast('Job deleted.','ok'); setDeleteTarget(null) } })
 
   const visible = jobs
@@ -131,10 +131,10 @@ export function JobsView({ onNav }: Props) {
                   <td>
                     <div className="row-acts" onClick={e => e.stopPropagation()}>
                       {j.status === 'running' && (
-                        <button className="icon-btn" title="Pause" onClick={() => pause.mutate(j.id)}><Pause size={16}/></button>
+                        <button className="icon-btn" title="Stop" onClick={() => pause.mutate(j.id)}><Square size={16}/></button>
                       )}
                       {j.status === 'paused' && (
-                        <button className="icon-btn" title="Resume" onClick={() => resume.mutate(j.id)}><Play size={16}/></button>
+                        <button className="icon-btn" title="Restart" onClick={() => resume.mutate(j.id)}><Play size={16}/></button>
                       )}
                       {(j.status === 'idle' || j.status === 'error') && (
                         <button className="icon-btn" title="Run now" onClick={() => run.mutate(j.id)}><Play size={16}/></button>
