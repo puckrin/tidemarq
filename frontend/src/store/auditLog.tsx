@@ -1,76 +1,20 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
-import { wsClient } from '../api/ws'
-import type { WsEvent } from '../api/types'
-
-export interface LogEntry {
-  id: number
-  ts: Date
-  jobId: number
-  jobName: string
-  type: 'sync' | 'error' | 'info'
-  message: string
-  detail?: string
-}
+// AuditLogProvider is kept for API compatibility but the audit view now
+// reads directly from the DB via REST. This file is intentionally minimal.
+import { createContext, useContext, type ReactNode } from 'react'
 
 interface AuditLogContext {
-  entries: LogEntry[]
-  clear: () => void
+  // reserved for future use
 }
 
 const Ctx = createContext<AuditLogContext | null>(null)
 
-let nextId = 0
-
-const EVENT_LABELS: Record<Exclude<WsEvent['event'], 'progress'>, string> = {
-  started:   'Job started',
-  paused:    'Job stopped',
-  completed: 'Job completed',
-  error:     'Job error',
-}
-
-function wsEventToEntry(e: WsEvent, jobName: string): LogEntry {
-  const type = e.event === 'error' ? 'error' : e.event === 'paused' ? 'info' : 'sync'
-  let detail: string | undefined
-  if (e.event === 'error' && e.message) detail = e.message
-  if (e.event === 'completed' && e.files_done != null) detail = `${e.files_done} files processed`
-
-  return {
-    id:      ++nextId,
-    ts:      new Date(),
-    jobId:   e.job_id,
-    jobName,
-    type,
-    message: EVENT_LABELS[e.event as Exclude<WsEvent['event'], 'progress'>],
-    detail,
-  }
-}
-
 interface Props {
   children: ReactNode
-  jobNames: Record<number, string>   // jobId → name, kept up to date by Shell
+  jobNames?: Record<number, string>
 }
 
-export function AuditLogProvider({ children, jobNames }: Props) {
-  const [entries, setEntries] = useState<LogEntry[]>([])
-
-  const add = useCallback((entry: LogEntry) => {
-    setEntries(prev => [entry, ...prev].slice(0, 500))
-  }, [])
-
-  useEffect(() => {
-    const unsub = wsClient.subscribe((e: WsEvent) => {
-      // Only record lifecycle events — progress events are too frequent and
-      // belong in the live job panel, not the audit log.
-      if (e.event === 'progress') return
-      const name = jobNames[e.job_id] ?? `Job #${e.job_id}`
-      add(wsEventToEntry(e, name))
-    })
-    return () => { unsub() }
-  }, [jobNames, add])
-
-  const clear = useCallback(() => setEntries([]), [])
-
-  return <Ctx.Provider value={{ entries, clear }}>{children}</Ctx.Provider>
+export function AuditLogProvider({ children }: Props) {
+  return <Ctx.Provider value={{}}>{children}</Ctx.Provider>
 }
 
 export function useAuditLog() {
