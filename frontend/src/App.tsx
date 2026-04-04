@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './store/auth'
 import { ToastProvider } from './components/Toast'
+import { AuditLogProvider } from './store/auditLog'
 import { Sidebar, type View } from './components/Sidebar'
 import { Topbar } from './components/Topbar'
 import { useTheme } from './hooks/useTheme'
 import { useQuery } from '@tanstack/react-query'
-import { listConflicts } from './api/client'
+import { listConflicts, listJobs } from './api/client'
 
 import { LoginView }     from './views/LoginView'
 import { DashboardView } from './views/DashboardView'
@@ -32,13 +33,28 @@ function Shell() {
 
   useEffect(() => { setAuthed(!!user) }, [user])
 
+  const { data: jobs = [] } = useQuery({
+    queryKey: ['jobs'],
+    queryFn: listJobs,
+    refetchInterval: 30000,
+    enabled: authed,
+  })
+
   const { data: conflicts = [] } = useQuery({
     queryKey: ['conflicts'],
     queryFn: () => listConflicts(),
     refetchInterval: 30000,
     enabled: authed,
   })
+
   const pendingConflicts = conflicts.filter(c => c.status === 'pending').length
+
+  // Build a stable jobId→name map for the audit log
+  const jobNames = useMemo(() => {
+    const m: Record<number, string> = {}
+    jobs.forEach(j => { m[j.id] = j.name })
+    return m
+  }, [jobs])
 
   const nav = (v: View, id?: number) => {
     setView(v)
@@ -50,21 +66,24 @@ function Shell() {
   }
 
   return (
-    <div style={{ display: 'flex', width: '100%', height: '100%' }}>
-      <Sidebar current={view} onNav={nav} conflictCount={pendingConflicts} />
-      <div className="main">
-        <Topbar theme={theme} onToggleTheme={toggle} />
-        <div className="page">
-          {view === 'dashboard'   && <DashboardView onNav={nav} />}
-          {view === 'jobs'        && <JobsView onNav={nav} />}
-          {view === 'new-job'     && <NewJobView onNav={nav} />}
-          {view === 'job-detail'  && jobId != null && <JobDetailView jobId={jobId} onNav={nav} />}
-          {view === 'conflicts'   && <ConflictsView />}
-          {view === 'audit'       && <AuditView />}
-          {view === 'settings'    && <SettingsView />}
+    <AuditLogProvider jobNames={jobNames}>
+      <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+        <Sidebar current={view} onNav={nav} conflictCount={pendingConflicts} />
+        <div className="main">
+          <Topbar theme={theme} onToggleTheme={toggle} />
+          <div className="page">
+            {view === 'dashboard'  && <DashboardView onNav={nav} />}
+            {view === 'jobs'       && <JobsView onNav={nav} />}
+            {view === 'new-job'    && <NewJobView onNav={nav} />}
+            {view === 'edit-job'   && jobId != null && <NewJobView onNav={nav} editJobId={jobId} />}
+            {view === 'job-detail' && jobId != null && <JobDetailView jobId={jobId} onNav={nav} />}
+            {view === 'conflicts'  && <ConflictsView />}
+            {view === 'audit'      && <AuditView onNav={nav} />}
+            {view === 'settings'   && <SettingsView />}
+          </div>
         </div>
       </div>
-    </div>
+    </AuditLogProvider>
   )
 }
 

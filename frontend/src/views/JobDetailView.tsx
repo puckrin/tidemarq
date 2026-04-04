@@ -96,6 +96,7 @@ export function JobDetailView({ jobId, onNav }: Props) {
           {(job.status === 'idle' || job.status === 'error') && (
             <Button variant="secondary" onClick={() => run.mutate()}><Play size={14}/> Run now</Button>
           )}
+          <Button variant="secondary" onClick={() => onNav('edit-job', jobId)}><Pencil size={14}/> Edit</Button>
           <Button variant="ghost" onClick={() => setDelModal(true)}><Trash2 size={14}/></Button>
         </div>
       </div>
@@ -140,7 +141,7 @@ export function JobDetailView({ jobId, onNav }: Props) {
       <div className="grid2 sec-gap">
         {/* Configuration */}
         <Card>
-          <CardHeader title="Configuration" action={<Button variant="ghost" size="sm"><Pencil size={12}/> Edit</Button>}/>
+          <CardHeader title="Configuration" action={<Button variant="ghost" size="sm" onClick={() => onNav('edit-job', jobId)}><Pencil size={12}/> Edit</Button>}/>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13 }}>
             {[
               ['Source', <span className="mono fs12">{job.source_path}</span>],
