@@ -142,7 +142,7 @@ export interface HealthResponse {
 
 export interface WsEvent {
   job_id: number
-  event: 'started' | 'progress' | 'paused' | 'completed' | 'error'
+  event: 'started' | 'progress' | 'paused' | 'completed' | 'error' | 'conflict_resolved'
   files_done?: number
   files_total?: number
   files_skipped?: number

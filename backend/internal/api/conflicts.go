@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/db"
+	"github.com/tidemarq/tidemarq/internal/ws"
 )
 
 func (s *Server) handleListConflicts(w http.ResponseWriter, r *http.Request) {
@@ -91,5 +92,6 @@ func (s *Server) handleResolveConflict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.hub.Broadcast(ws.Event{JobID: c.JobID, Event: "conflict_resolved"})
 	w.WriteHeader(http.StatusNoContent)
 }

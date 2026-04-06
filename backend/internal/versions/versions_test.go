@@ -33,8 +33,7 @@ func newTestService(t *testing.T) (*versions.Service, *db.DB, int64) {
 	}
 
 	versionsDir := t.TempDir()
-	quarantineDir := t.TempDir()
-	svc := versions.New(d, versionsDir, quarantineDir, 30)
+	svc := versions.New(d, versionsDir, 30)
 	return svc, d, j.ID
 }
 
@@ -150,7 +149,7 @@ func TestQuarantine_MovesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e, err := svc.Quarantine(context.Background(), jobID, "file.txt", destPath)
+	e, err := svc.Quarantine(context.Background(), jobID, "file.txt", destPath, destDir)
 	if err != nil {
 		t.Fatalf("Quarantine: %v", err)
 	}
@@ -179,7 +178,7 @@ func TestRestoreQuarantine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e, err := svc.Quarantine(context.Background(), jobID, "file.txt", destPath)
+	e, err := svc.Quarantine(context.Background(), jobID, "file.txt", destPath, destDir)
 	if err != nil {
 		t.Fatalf("Quarantine: %v", err)
 	}

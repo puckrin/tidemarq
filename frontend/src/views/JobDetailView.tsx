@@ -4,33 +4,17 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getJob, runJob, pauseJob, resumeJob, deleteJob, listQuarantine } from '../api/client'
 import { QuarantineCard } from '../components/QuarantineCard'
 import { Badge } from '../components/Badge'
+import { StatusBadge, ModePill } from '../components/JobFormatters'
 import { Button } from '../components/Button'
 import { Card, CardHeader } from '../components/Card'
 import { ProgressBar } from '../components/ProgressBar'
 import { Modal } from '../components/Modal'
 import { useToast } from '../components/Toast'
 import { useJobProgress } from '../store/jobProgress'
-import type { Job } from '../api/types'
 import type { View } from '../components/Sidebar'
 
 interface Props { jobId: number; onNav: (v: View, id?: number) => void }
 
-function statusBadge(s: Job['status']) {
-  const map: Record<Job['status'], 'running'|'synced'|'pending'|'error'|'disabled'> = {
-    running:'running', idle:'synced', paused:'pending', error:'error', disabled:'disabled',
-  }
-  const labels: Record<Job['status'], string> = {
-    running:'Running', idle:'Synced', paused:'Stopped', error:'Error', disabled:'Disabled',
-  }
-  return <Badge variant={map[s]}>{labels[s]}</Badge>
-}
-
-function modePill(m: Job['mode']) {
-  const labels: Record<Job['mode'], string> = {
-    'one-way-backup':'One-way backup','one-way-mirror':'One-way mirror','two-way':'Two-way',
-  }
-  return <span className="mode-pill">{labels[m]}</span>
-}
 
 function fmtDate(d: string | null) {
   if (!d) return '—'
@@ -111,8 +95,8 @@ export function JobDetailView({ jobId, onNav }: Props) {
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>{job.name}</div>
           <div className="flex gap12 fs12 text2" style={{ flexWrap: 'wrap' }}>
-            {statusBadge(job.status)}
-            {modePill(job.mode)}
+            <StatusBadge status={job.status} />
+            <ModePill mode={job.mode} />
             {job.watch_enabled && <span>FS watch</span>}
             {job.cron_schedule && <span>{job.cron_schedule}</span>}
             {job.bandwidth_limit_kb > 0 && <span>BW: {(job.bandwidth_limit_kb/1024).toFixed(1)} MB/s</span>}
@@ -250,7 +234,7 @@ export function JobDetailView({ jobId, onNav }: Props) {
             {[
               ['Source', <span className="mono fs12">{job.source_path}</span>],
               ['Destination', <span className="mono fs12">{job.destination_path}</span>],
-              ['Mode', modePill(job.mode)],
+              ['Mode', <ModePill mode={job.mode} />],
               ['Trigger', job.watch_enabled && job.cron_schedule
                 ? `FS watch & ${job.cron_schedule}`
                 : job.watch_enabled ? 'FS watch' : job.cron_schedule || 'Manual'],

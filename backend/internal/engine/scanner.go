@@ -48,16 +48,24 @@ func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int) ([]FileInfo, 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for w := range workCh {
-				mu.Lock()
-				results = append(results, FileInfo{
-					RelPath:     w.relPath,
-					AbsPath:     "", // not applicable for remote FS
-					Size:        w.info.Size,
-					ModTime:     w.info.ModTime,
-					Permissions: w.info.Mode.Perm(),
-				})
-				mu.Unlock()
+			for {
+				select {
+				case w, ok := <-workCh:
+					if !ok {
+						return
+					}
+					mu.Lock()
+					results = append(results, FileInfo{
+						RelPath:     w.relPath,
+						AbsPath:     "", // not applicable for remote FS
+						Size:        w.info.Size,
+						ModTime:     w.info.ModTime,
+						Permissions: w.info.Mode.Perm(),
+					})
+					mu.Unlock()
+				case <-ctx.Done():
+					return
+				}
 			}
 		}()
 	}
@@ -89,7 +97,11 @@ func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int) ([]FileInfo, 
 					return err
 				}
 			} else {
-				workCh <- work{relPath: relPath, info: e}
+				select {
+				case workCh <- work{relPath: relPath, info: e}:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			}
 		}
 		return nil
@@ -136,34 +148,42 @@ func scanDir(ctx context.Context, root string, workers int) ([]FileInfo, error) 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for w := range workCh {
-				info, err := w.info.Info()
-				if err != nil {
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
+			for {
+				select {
+				case w, ok := <-workCh:
+					if !ok {
+						return
 					}
-					mu.Unlock()
-					continue
-				}
-				relPath, err := filepath.Rel(root, w.path)
-				if err != nil {
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
+					info, err := w.info.Info()
+					if err != nil {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = err
+						}
+						mu.Unlock()
+						continue
 					}
+					relPath, err := filepath.Rel(root, w.path)
+					if err != nil {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = err
+						}
+						mu.Unlock()
+						continue
+					}
+					mu.Lock()
+					results = append(results, FileInfo{
+						RelPath:     filepath.ToSlash(relPath),
+						AbsPath:     w.path,
+						Size:        info.Size(),
+						ModTime:     info.ModTime(),
+						Permissions: info.Mode().Perm(),
+					})
 					mu.Unlock()
-					continue
+				case <-ctx.Done():
+					return
 				}
-				mu.Lock()
-				results = append(results, FileInfo{
-					RelPath:     filepath.ToSlash(relPath),
-					AbsPath:     w.path,
-					Size:        info.Size(),
-					ModTime:     info.ModTime(),
-					Permissions: info.Mode().Perm(),
-				})
-				mu.Unlock()
 			}
 		}()
 	}
@@ -183,7 +203,11 @@ func scanDir(ctx context.Context, root string, workers int) ([]FileInfo, error) 
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		workCh <- work{path: path, info: d}
+		select {
+		case workCh <- work{path: path, info: d}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		return nil
 	})
 

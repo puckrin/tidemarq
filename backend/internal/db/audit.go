@@ -94,7 +94,7 @@ func (db *DB) ListAuditEntries(ctx context.Context, f AuditFilter) ([]*AuditEntr
 		args = append(args, f.Until.UTC())
 	}
 
-	query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	query += ` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, f.Offset)
 
 	rows, err := db.QueryContext(ctx, query, args...)
