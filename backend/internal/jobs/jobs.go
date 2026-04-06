@@ -145,6 +145,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*db.Job, error) {
 	if !validMode(p.Mode) {
 		return nil, fmt.Errorf("invalid mode %q: must be one-way-backup, one-way-mirror, or two-way", p.Mode)
 	}
+	if p.Mode != "two-way" {
+		p.ConflictStrategy = ""
+	}
 	if p.CronSchedule != "" {
 		if _, err := cron.ParseStandard(p.CronSchedule); err != nil {
 			return nil, fmt.Errorf("invalid cron_schedule: %w", err)
@@ -199,6 +202,9 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (*db.Job
 	}
 	if !validMode(p.Mode) {
 		return nil, fmt.Errorf("invalid mode %q", p.Mode)
+	}
+	if p.Mode != "two-way" {
+		p.ConflictStrategy = ""
 	}
 	if p.CronSchedule != "" {
 		if _, err := cron.ParseStandard(p.CronSchedule); err != nil {

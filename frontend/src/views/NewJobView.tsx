@@ -274,25 +274,30 @@ export function NewJobView({ onNav, editJobId }: Props) {
                 <div
                   key={m.value}
                   className={`mode-card${form.mode === m.value ? ' sel' : ''}`}
-                  onClick={() => set({ mode: m.value })}
+                  onClick={() => set({ mode: m.value, ...(m.value !== 'two-way' ? { conflict_strategy: 'ask-user' } : {}) })}
                 >
                   <div className="mc-title">{m.title}</div>
                   <div className="mc-desc">{m.desc}</div>
                 </div>
               ))}
             </div>
-            <div className="fg" style={{ marginBottom: 0, marginTop: 8 }}>
+            <div className="fg" style={{ marginBottom: 0, marginTop: 8, opacity: form.mode !== 'two-way' ? 0.45 : 1 }}>
               <label className="fl">Conflict strategy</label>
               <select
                 className="fs"
                 value={form.conflict_strategy}
+                disabled={form.mode !== 'two-way'}
                 onChange={e => set({ conflict_strategy: e.target.value as Job['conflict_strategy'] })}
               >
                 {STRATEGY_OPTIONS.map(o => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </select>
-              <div className="fhint">How to handle files modified on both sides simultaneously.</div>
+              <div className="fhint">
+                {form.mode !== 'two-way'
+                  ? 'Only applicable to two-way sync.'
+                  : 'How to handle files modified on both sides simultaneously.'}
+              </div>
             </div>
           </div>
         )}
@@ -401,7 +406,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
                 ['Source',           <span className="mono fs12">{pathLabel(form.source, mounts)}</span>],
                 ['Destination',      <span className="mono fs12">{pathLabel(form.dest, mounts)}</span>],
                 ['Mode',             form.mode.replace(/-/g, ' ')],
-                ['Conflict strategy',form.conflict_strategy.replace(/-/g, ' ')],
+                ...(form.mode === 'two-way' ? [['Conflict strategy', form.conflict_strategy.replace(/-/g, ' ')] as [string, React.ReactNode]] : []),
                 ['FS watch',         effectiveWatch ? 'Enabled' : watchDisabled ? 'Disabled (network mount)' : 'Disabled'],
                 ['Cron schedule',    form.cron_schedule || 'None'],
                 ['Bandwidth limit',  form.bandwidth_limit_kb > 0 ? `${form.bandwidth_limit_kb} KB/s` : 'Unlimited'],

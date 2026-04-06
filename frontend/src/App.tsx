@@ -8,7 +8,7 @@ import { Sidebar, type View } from './components/Sidebar'
 import { Topbar } from './components/Topbar'
 import { useTheme } from './hooks/useTheme'
 import { useQuery } from '@tanstack/react-query'
-import { listConflicts, listJobs } from './api/client'
+import { listConflicts, listJobs, listQuarantine } from './api/client'
 
 import { LoginView }     from './views/LoginView'
 import { DashboardView } from './views/DashboardView'
@@ -52,6 +52,14 @@ function Shell() {
 
   const pendingConflicts = conflicts.filter(c => c.status === 'pending').length
 
+  const { data: quarantine = [] } = useQuery({
+    queryKey: ['quarantine'],
+    queryFn: () => listQuarantine(),
+    refetchInterval: 60000,
+    enabled: authed,
+  })
+  const quarantineCount = quarantine.length
+
   // Build a stable jobId→name map for the audit log
   const jobNames = useMemo(() => {
     const m: Record<number, string> = {}
@@ -72,7 +80,7 @@ function Shell() {
     <JobProgressProvider>
     <AuditLogProvider jobNames={jobNames}>
       <div style={{ display: 'flex', width: '100%', height: '100%' }}>
-        <Sidebar current={view} onNav={nav} conflictCount={pendingConflicts} />
+        <Sidebar current={view} onNav={nav} conflictCount={pendingConflicts} quarantineCount={quarantineCount} />
         <div className="main">
           <Topbar theme={theme} onToggleTheme={toggle} />
           <div className="page">
@@ -81,7 +89,7 @@ function Shell() {
             {view === 'new-job'    && <NewJobView onNav={nav} />}
             {view === 'edit-job'   && jobId != null && <NewJobView onNav={nav} editJobId={jobId} />}
             {view === 'job-detail' && jobId != null && <JobDetailView jobId={jobId} onNav={nav} />}
-            {view === 'conflicts'  && <ConflictsView />}
+            {view === 'conflicts'  && <ConflictsView onNav={nav} />}
             {view === 'quarantine' && <QuarantineView onNav={nav} />}
             {view === 'audit'      && <AuditView onNav={nav} />}
             {view === 'mounts'     && <MountsView />}

@@ -67,6 +67,9 @@ export interface QuarantineEntry {
   size_bytes: number
   deleted_at: string
   expires_at: string
+  /** "active" while in quarantine; "restored" or "deleted" after action taken. */
+  status: 'active' | 'restored' | 'deleted'
+  removed_at: string | null
 }
 
 export interface User {

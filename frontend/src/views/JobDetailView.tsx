@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Square, Play, Trash2, Pencil, FileCheck, FileCog, FileX } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getJob, runJob, pauseJob, resumeJob, deleteJob, listQuarantine } from '../api/client'
+import { getJob, runJob, pauseJob, resumeJob, deleteJob, listQuarantine, listConflicts } from '../api/client'
 import { QuarantineCard } from '../components/QuarantineCard'
+import { ConflictCard } from '../components/ConflictCard'
 import { Badge } from '../components/Badge'
 import { StatusBadge, ModePill } from '../components/JobFormatters'
 import { Button } from '../components/Button'
@@ -54,6 +55,15 @@ export function JobDetailView({ jobId, onNav }: Props) {
     refetchInterval: 30000,
     staleTime: 10000,
   })
+
+  const { data: allConflicts = [] } = useQuery({
+    queryKey: ['conflicts', jobId],
+    queryFn: () => listConflicts(jobId),
+    refetchInterval: 10000,
+    staleTime: 5000,
+    enabled: job?.mode === 'two-way',
+  })
+  const pendingConflicts = allConflicts.filter(c => c.status === 'pending')
 
 
   // Global progress store — survives navigation
@@ -238,7 +248,7 @@ export function JobDetailView({ jobId, onNav }: Props) {
               ['Trigger', job.watch_enabled && job.cron_schedule
                 ? `FS watch & ${job.cron_schedule}`
                 : job.watch_enabled ? 'FS watch' : job.cron_schedule || 'Manual'],
-              ['Conflict strategy', job.conflict_strategy.replace(/-/g,' ')],
+              ...(job.mode === 'two-way' ? [['Conflict strategy', job.conflict_strategy.replace(/-/g,' ')]] : []),
               ['Bandwidth limit', job.bandwidth_limit_kb > 0 ? `${(job.bandwidth_limit_kb/1024).toFixed(1)} MB/s` : 'None'],
               ['Verification', job.full_checksum ? 'Full SHA-256 (all files)' : 'Metadata fast-path'],
             ].map(([label, val]) => (
@@ -273,6 +283,17 @@ export function JobDetailView({ jobId, onNav }: Props) {
           </div>
         </Card>
       </div>
+
+      {/* Pending conflicts — two-way jobs only, shown when conflicts exist */}
+      {job.mode === 'two-way' && pendingConflicts.length > 0 && (
+        <Card style={{ marginTop: 16 }}>
+          <CardHeader title={`Pending Conflicts (${pendingConflicts.length})`} />
+          <ConflictCard
+            conflicts={pendingConflicts}
+            onChanged={() => qc.invalidateQueries({ queryKey: ['conflicts', jobId] })}
+          />
+        </Card>
+      )}
 
       {/* Quarantined files — shown below config/details when entries exist */}
       {quarantine.length > 0 && (

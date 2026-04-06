@@ -414,10 +414,11 @@ func TestEngine_TwoWay_Idempotent(t *testing.T) {
 	}
 }
 
-// TestEngine_TwoWay_ConflictRenamesDest verifies that when both sides change
-// the same file, the ask-user strategy renames the dest copy with a
-// .conflict.<timestamp> suffix and copies source to dest.
-func TestEngine_TwoWay_ConflictRenamesDest(t *testing.T) {
+// TestEngine_TwoWay_ConflictAskUser verifies that when both sides change the same
+// file and strategy is ask-user, the conflict is recorded but neither file is
+// modified and no .conflict.<timestamp> file is created.  Resolution is deferred
+// to the user via the API.
+func TestEngine_TwoWay_ConflictAskUser(t *testing.T) {
 	eng, jobID, src, dst, vSvc, cSvc := testEnvFull(t)
 
 	writeFile(t, filepath.Join(src, "file.txt"), "original")
@@ -437,7 +438,7 @@ func TestEngine_TwoWay_ConflictRenamesDest(t *testing.T) {
 	writeFile(t, filepath.Join(src, "file.txt"), "source version")
 	writeFile(t, filepath.Join(dst, "file.txt"), "dest version")
 
-	// Second run — should detect conflict and rename dest.
+	// Second run — should detect conflict without touching the filesystem.
 	result, err := eng.Run(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("conflict Run: %v", err)
@@ -446,22 +447,32 @@ func TestEngine_TwoWay_ConflictRenamesDest(t *testing.T) {
 		t.Errorf("Conflicts: got %d, want 1", result.Conflicts)
 	}
 
-	// Destination should now contain the source version.
-	got, _ := os.ReadFile(filepath.Join(dst, "file.txt"))
-	if string(got) != "source version" {
-		t.Errorf("dest content: got %q, want %q", got, "source version")
+	// Both files must be untouched — neither side is modified until the user resolves.
+	gotSrc, _ := os.ReadFile(filepath.Join(src, "file.txt"))
+	if string(gotSrc) != "source version" {
+		t.Errorf("src content changed unexpectedly: got %q", gotSrc)
+	}
+	gotDest, _ := os.ReadFile(filepath.Join(dst, "file.txt"))
+	if string(gotDest) != "dest version" {
+		t.Errorf("dest content changed unexpectedly: got %q", gotDest)
 	}
 
-	// A .conflict.* file should exist in dest.
+	// No .conflict.* files should have been created.
 	entries, _ := os.ReadDir(dst)
-	found := false
 	for _, e := range entries {
 		if strings.Contains(e.Name(), ".conflict.") {
-			found = true
+			t.Errorf("unexpected conflict file created at detection time: %s", e.Name())
 		}
 	}
-	if !found {
-		t.Error("expected a .conflict.<timestamp> file in dest directory")
+
+	// Running the engine again (simulating a second sync before resolution) must
+	// record only one conflict — CreateConflict is idempotent.
+	result2, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("third Run: %v", err)
+	}
+	if result2.Conflicts != 1 {
+		t.Errorf("second conflict run Conflicts: got %d, want 1", result2.Conflicts)
 	}
 }
 
@@ -555,6 +566,178 @@ func TestEngine_Mirror_QuarantinesDeletedFile(t *testing.T) {
 	// keep.txt must remain untouched.
 	if _, err := os.Stat(filepath.Join(dst, "keep.txt")); os.IsNotExist(err) {
 		t.Error("keep.txt should still exist in dest")
+	}
+}
+
+// TestEngine_Mirror_PrunesEmptyDirAfterQuarantine verifies that when all files
+// in a source subdirectory are deleted, the corresponding empty directory is
+// removed from the destination after the mirror sync quarantines its contents.
+func TestEngine_Mirror_PrunesEmptyDirAfterQuarantine(t *testing.T) {
+	eng, jobID, src, dst, vSvc, _ := testEnvFull(t)
+
+	// Create a dedicated subdirectory with two files.
+	writeFile(t, filepath.Join(src, "docs", "a.txt"), "a")
+	writeFile(t, filepath.Join(src, "docs", "b.txt"), "b")
+	writeFile(t, filepath.Join(src, "root.txt"), "root") // file at dest root — must survive
+
+	cfg := engine.Config{
+		JobID: jobID, Mode: "one-way-mirror",
+		SourcePath: src, DestinationPath: dst,
+		VersionsSvc: vSvc,
+	}
+
+	// First run: sync everything to dest.
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "docs")); err != nil {
+		t.Fatal("docs/ should exist in dest after first run")
+	}
+
+	// Remove the entire docs/ directory from source.
+	if err := os.RemoveAll(filepath.Join(src, "docs")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second run: both files should be quarantined.
+	result, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if result.Quarantined != 2 {
+		t.Errorf("expected 2 quarantined files, got %d", result.Quarantined)
+	}
+
+	// docs/ should have been pruned from dest — it is now empty.
+	if _, err := os.Stat(filepath.Join(dst, "docs")); err == nil {
+		t.Error("expected empty docs/ to be removed from dest after quarantine")
+	}
+	// Root-level file and dest root itself must be untouched.
+	if _, err := os.Stat(filepath.Join(dst, "root.txt")); err != nil {
+		t.Errorf("root.txt should still be in dest: %v", err)
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Errorf("destination root must not be removed: %v", err)
+	}
+}
+
+// TestEngine_Mirror_RetainsDirWhenSiblingFileRemains verifies that a
+// destination directory is NOT pruned when only some of its files are removed
+// from the source — a sibling file keeps it alive.
+func TestEngine_Mirror_RetainsDirWhenSiblingFileRemains(t *testing.T) {
+	eng, jobID, src, dst, vSvc, _ := testEnvFull(t)
+
+	writeFile(t, filepath.Join(src, "docs", "keep.txt"), "keep")
+	writeFile(t, filepath.Join(src, "docs", "remove.txt"), "remove")
+
+	cfg := engine.Config{
+		JobID: jobID, Mode: "one-way-mirror",
+		SourcePath: src, DestinationPath: dst,
+		VersionsSvc: vSvc,
+	}
+
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Remove only one of the two files.
+	if err := os.Remove(filepath.Join(src, "docs", "remove.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if result.Quarantined != 1 {
+		t.Errorf("expected 1 quarantined file, got %d", result.Quarantined)
+	}
+
+	// docs/ should still exist — keep.txt is still there.
+	if _, err := os.Stat(filepath.Join(dst, "docs")); err != nil {
+		t.Errorf("docs/ should still exist while keep.txt remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "docs", "keep.txt")); err != nil {
+		t.Errorf("keep.txt should still be in dest: %v", err)
+	}
+}
+
+// TestEngine_Mirror_PrunesNestedEmptyDirs verifies bottom-up pruning across
+// multiple levels of nesting when an entire subtree is removed from source.
+func TestEngine_Mirror_PrunesNestedEmptyDirs(t *testing.T) {
+	eng, jobID, src, dst, vSvc, _ := testEnvFull(t)
+
+	writeFile(t, filepath.Join(src, "a", "b", "c", "deep.txt"), "deep")
+
+	cfg := engine.Config{
+		JobID: jobID, Mode: "one-way-mirror",
+		SourcePath: src, DestinationPath: dst,
+		VersionsSvc: vSvc,
+	}
+
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	if err := os.RemoveAll(filepath.Join(src, "a")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+
+	// All three ancestor directories should be pruned.
+	for _, dir := range []string{
+		filepath.Join(dst, "a", "b", "c"),
+		filepath.Join(dst, "a", "b"),
+		filepath.Join(dst, "a"),
+	} {
+		if _, err := os.Stat(dir); err == nil {
+			t.Errorf("expected empty dir to be removed from dest: %s", dir)
+		}
+	}
+	// Destination root must survive.
+	if _, err := os.Stat(dst); err != nil {
+		t.Errorf("destination root must not be removed: %v", err)
+	}
+}
+
+// TestEngine_TwoWay_PrunesEmptyDirAfterQuarantine verifies the same pruning
+// behaviour in two-way mode when the source side of a file is deleted.
+func TestEngine_TwoWay_PrunesEmptyDirAfterQuarantine(t *testing.T) {
+	eng, jobID, src, dst, vSvc, cSvc := testEnvFull(t)
+
+	writeFile(t, filepath.Join(src, "shared", "file.txt"), "data")
+
+	cfg := engine.Config{
+		JobID: jobID, Mode: "two-way",
+		SourcePath: src, DestinationPath: dst,
+		VersionsSvc: vSvc, ConflictsSvc: cSvc,
+		ConflictStrategy: "ask-user",
+	}
+
+	// First run: establish baseline.
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Delete the source copy — dest still has it, so the engine should
+	// quarantine the dest copy in two-way mode.
+	if err := os.RemoveAll(filepath.Join(src, "shared")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+
+	// shared/ should be pruned from dest after the file was quarantined.
+	if _, err := os.Stat(filepath.Join(dst, "shared")); err == nil {
+		t.Error("expected empty shared/ to be removed from dest after quarantine")
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Errorf("destination root must not be removed: %v", err)
 	}
 }
 

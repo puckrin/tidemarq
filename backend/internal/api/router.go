@@ -56,22 +56,25 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/api/v1/jobs/{id}/resume", s.handleResumeJob)
 		})
 
-		// Conflicts: read for all authenticated; resolve for admin/operator.
+		// Conflicts: read for all authenticated; resolve/clear for admin/operator.
 		r.Get("/api/v1/conflicts", s.handleListConflicts)
 		r.Get("/api/v1/conflicts/{id}", s.handleGetConflict)
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireRole("admin", "operator"))
 			r.Post("/api/v1/conflicts/{id}/resolve", s.handleResolveConflict)
+			r.Post("/api/v1/conflicts/clear-resolved", s.handleClearResolvedConflicts)
 		})
 
-		// Versions and quarantine: read for all; restore for admin/operator.
+		// Versions and quarantine: read for all; restore/clear for admin/operator.
 		r.Get("/api/v1/versions", s.handleListVersions)
 		r.Get("/api/v1/quarantine", s.handleListQuarantine)
+		r.Get("/api/v1/quarantine/removed", s.handleListRemovedQuarantine)
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireRole("admin", "operator"))
 			r.Post("/api/v1/versions/{id}/restore", s.handleRestoreVersion)
 			r.Post("/api/v1/quarantine/{id}/restore", s.handleRestoreQuarantine)
 			r.Delete("/api/v1/quarantine/{id}", s.handleDeleteQuarantine)
+			r.Post("/api/v1/quarantine/clear-removed", s.handleClearRemovedQuarantine)
 		})
 
 		// Mounts: admin/operator write, all authenticated read.

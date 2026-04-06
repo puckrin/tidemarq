@@ -77,6 +77,8 @@ export const resolveConflict = (id: number, action: string) =>
     method: 'POST',
     body: JSON.stringify({ action }),
   })
+export const clearResolvedConflicts = (jobId?: number) =>
+  request<void>(`${BASE}/conflicts/clear-resolved${jobId != null ? `?job_id=${jobId}` : ''}`, { method: 'POST' })
 
 // Versions
 export const listVersions = (jobId: number, path: string) =>
@@ -87,10 +89,14 @@ export const restoreVersion = (id: number) =>
 // Quarantine
 export const listQuarantine = (jobId?: number) =>
   request<QuarantineEntry[]>(`${BASE}/quarantine${jobId ? `?job_id=${jobId}` : ''}`)
+export const listRemovedQuarantine = (jobId?: number) =>
+  request<QuarantineEntry[]>(`${BASE}/quarantine/removed${jobId != null ? `?job_id=${jobId}` : ''}`)
 export const restoreQuarantine = (id: number) =>
   request<void>(`${BASE}/quarantine/${id}/restore`, { method: 'POST' })
 export const deleteQuarantineEntry = (id: number) =>
   request<void>(`${BASE}/quarantine/${id}`, { method: 'DELETE' })
+export const clearRemovedQuarantine = (jobId?: number) =>
+  request<void>(`${BASE}/quarantine/clear-removed${jobId != null ? `?job_id=${jobId}` : ''}`, { method: 'POST' })
 
 // Mounts
 export const listMounts = () => request<Mount[]>(`${BASE}/mounts`)

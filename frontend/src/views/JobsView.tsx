@@ -96,7 +96,7 @@ export function JobsView({ onNav }: Props) {
                   <td>
                     <div className="fw5">{j.name}</div>
                     {j.last_error && <div className="fs11 text3" style={{ color: 'var(--coral-light)' }}>⚠ {j.last_error}</div>}
-                    {j.conflict_strategy !== 'ask-user' && !j.last_error && (
+                    {j.mode === 'two-way' && j.conflict_strategy !== 'ask-user' && !j.last_error && (
                       <div className="fs11 text3">Conflict: {j.conflict_strategy}</div>
                     )}
                   </td>
