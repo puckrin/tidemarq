@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Square, Play, Trash2, Pencil, FileCheck, FileCog, FileX } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getJob, runJob, pauseJob, resumeJob, deleteJob } from '../api/client'
+import { getJob, runJob, pauseJob, resumeJob, deleteJob, listQuarantine } from '../api/client'
+import { QuarantineCard } from '../components/QuarantineCard'
 import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
 import { Card, CardHeader } from '../components/Card'
@@ -63,6 +64,14 @@ export function JobDetailView({ jobId, onNav }: Props) {
 
   const { data: job } = useQuery({ queryKey: ['job', jobId], queryFn: () => getJob(jobId), refetchInterval: 5000 })
 
+  const { data: quarantine = [] } = useQuery({
+    queryKey: ['quarantine', jobId],
+    queryFn: () => listQuarantine(jobId),
+    refetchInterval: 30000,
+    staleTime: 10000,
+  })
+
+
   // Global progress store — survives navigation
   const progress = useJobProgress(jobId)
 
@@ -75,6 +84,18 @@ export function JobDetailView({ jobId, onNav }: Props) {
 
   const isRunning = job.status === 'running'
   const pct = progress.filesTotal > 0 ? Math.round(progress.filesDone / progress.filesTotal * 100) : 0
+
+  // If the WS 'completed'/'error'/'paused' event was missed (connection timing, page refresh,
+  // etc.), lastEvent stays at 'progress' or 'started' even after the job goes idle.
+  // Fall back to job.status (polled every 5 s) as the authoritative terminal state.
+  const terminalEvent: string = (() => {
+    if (isRunning) return progress.lastEvent
+    if (progress.lastEvent === 'completed' || progress.lastEvent === 'error' || progress.lastEvent === 'paused') return progress.lastEvent
+    if (progress.lastEvent === '') return ''          // no WS data at all — keep panel hidden
+    return job.status === 'error' ? 'error'
+         : job.status === 'paused' ? 'paused'
+         : 'completed'                               // idle/disabled → treat as completed
+  })()
 
   return (
     <div>
@@ -113,14 +134,14 @@ export function JobDetailView({ jobId, onNav }: Props) {
       </div>
 
       {/* Live progress panel — shown while running, or while progress data exists from this session */}
-      {(isRunning || progress.lastEvent !== '') && (
+      {(isRunning || terminalEvent !== '') && (
         <div className="run-panel" style={{ marginBottom: 20 }}>
           <div className="run-hd">
             <div className="flex gap8">
               {isRunning
                 ? <Badge variant="running">Running</Badge>
-                : <Badge variant={progress.lastEvent === 'completed' ? 'synced' : progress.lastEvent === 'paused' ? 'pending' : 'error'}>
-                    {progress.lastEvent === 'completed' ? 'Completed' : progress.lastEvent === 'paused' ? 'Stopped' : progress.lastEvent === 'error' ? 'Error' : 'Running'}
+                : <Badge variant={terminalEvent === 'completed' ? 'synced' : terminalEvent === 'paused' ? 'pending' : 'error'}>
+                    {terminalEvent === 'completed' ? 'Completed' : terminalEvent === 'paused' ? 'Stopped' : 'Error'}
                   </Badge>
               }
             </div>
@@ -132,8 +153,8 @@ export function JobDetailView({ jobId, onNav }: Props) {
           <ProgressBar pct={pct} height={8} />
 
           {/* Current file indicator — shows during scanning (evaluating), copying (bytes moving),
-              and removing (quarantine/delete). Stays visible between files. */}
-          {(progress.currentAction === 'scanning' || progress.currentAction === 'copying' || progress.currentAction === 'removing') && progress.currentFile && (
+              and removing (quarantine/delete). Only shown while the job is actively running. */}
+          {isRunning && (progress.currentAction === 'scanning' || progress.currentAction === 'copying' || progress.currentAction === 'removing') && progress.currentFile && (
             <div style={{
               marginTop: 8,
               fontSize: 12,
@@ -198,7 +219,7 @@ export function JobDetailView({ jobId, onNav }: Props) {
                 background: 'var(--input-bg)',
               }}>
                 {progress.recentFiles.map((f, i) => (
-                  <div key={i} style={{
+                  <div key={`${f.ts}-${f.relPath}`} style={{
                     display: 'flex',
                     alignItems: 'center',
                     gap: 8,
@@ -268,6 +289,17 @@ export function JobDetailView({ jobId, onNav }: Props) {
           </div>
         </Card>
       </div>
+
+      {/* Quarantined files — shown below config/details when entries exist */}
+      {quarantine.length > 0 && (
+        <Card style={{ marginTop: 16 }}>
+          <CardHeader title={`Quarantined Files (${quarantine.length})`} />
+          <QuarantineCard
+            entries={quarantine}
+            onChanged={() => qc.invalidateQueries({ queryKey: ['quarantine', jobId] })}
+          />
+        </Card>
+      )}
 
       <Modal
         open={delModal}

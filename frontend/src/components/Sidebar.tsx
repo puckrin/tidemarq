@@ -1,4 +1,4 @@
-import { LayoutDashboard, RefreshCw, GitMerge, ScrollText, Settings, LogOut, HardDrive } from 'lucide-react'
+import { LayoutDashboard, RefreshCw, GitMerge, ScrollText, Settings, LogOut, HardDrive, Archive } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../store/auth'
 import { Modal } from './Modal'
@@ -10,6 +10,7 @@ export type View =
   | 'edit-job'
   | 'job-detail'
   | 'conflicts'
+  | 'quarantine'
   | 'audit'
   | 'mounts'
   | 'settings'
@@ -32,9 +33,10 @@ const overviewItems: NavItem[] = [
 ]
 
 const manageItems: NavItem[] = [
-  { view: 'conflicts', label: 'Conflicts',  icon: <GitMerge size={18} /> },
-  { view: 'audit',     label: 'Audit Log',  icon: <ScrollText size={18} /> },
-  { view: 'mounts',    label: 'Mounts',     icon: <HardDrive size={18} /> },
+  { view: 'conflicts',  label: 'Conflicts',  icon: <GitMerge size={18} /> },
+  { view: 'quarantine', label: 'Quarantine', icon: <Archive size={18} /> },
+  { view: 'audit',      label: 'Audit Log',  icon: <ScrollText size={18} /> },
+  { view: 'mounts',     label: 'Mounts',     icon: <HardDrive size={18} /> },
 ]
 
 const systemItems: NavItem[] = [
@@ -73,7 +75,7 @@ export function Sidebar({ current, onNav, conflictCount }: Props) {
     <>
       <nav className="sidebar">
         <div className="sidebar-logo" onClick={() => onNav('dashboard')}>
-          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" style={{ flexShrink: 0 }}>
+          <svg width="42" height="42" viewBox="0 0 36 36" fill="none" style={{ flexShrink: 0 }}>
             <rect x="0" y="27" width="36" height="4" rx="2" fill="#E0F4F7" opacity="0.28"/>
             <rect x="0" y="19" width="27" height="4" rx="2" fill="#E0F4F7" opacity="0.50"/>
             <rect x="0" y="11" width="18" height="4" rx="2" fill="#E0F4F7" opacity="0.75"/>
@@ -92,6 +94,7 @@ export function Sidebar({ current, onNav, conflictCount }: Props) {
         {item(manageItems[0], conflictCount)}
         {item(manageItems[1])}
         {item(manageItems[2])}
+        {item(manageItems[3])}
 
         <div className="nav-sep">System</div>
         {systemItems.map(n => item(n))}

@@ -19,26 +19,27 @@ import (
 // ErrNotFound is returned when a version or quarantine record does not exist.
 var ErrNotFound = errors.New("not found")
 
+// quarantineDirName is the folder created inside the destination root to hold
+// soft-deleted files. Using a dot-prefix keeps it hidden on Unix systems.
+const quarantineDirName = ".tidemarq-quarantine"
+
 // Service manages version snapshots and quarantine entries.
 type Service struct {
-	db           *db.DB
-	versionsDir  string
-	quarantineDir string
+	db            *db.DB
+	versionsDir   string
 	retentionDays int
 }
 
 // New creates a new versions Service.
 // versionsDir is where snapshot files are stored.
-// quarantineDir is where soft-deleted files are held.
 // retentionDays is how long quarantine entries are kept before expiry.
-func New(database *db.DB, versionsDir, quarantineDir string, retentionDays int) *Service {
+func New(database *db.DB, versionsDir string, retentionDays int) *Service {
 	if retentionDays <= 0 {
 		retentionDays = 30
 	}
 	return &Service{
 		db:            database,
 		versionsDir:   versionsDir,
-		quarantineDir: quarantineDir,
 		retentionDays: retentionDays,
 	}
 }
@@ -74,12 +75,12 @@ func (s *Service) Snapshot(ctx context.Context, jobID int64, relPath, destPath s
 	}
 
 	return s.db.CreateFileVersion(ctx, &db.FileVersion{
-		JobID:     jobID,
-		RelPath:   relPath,
+		JobID:      jobID,
+		RelPath:    relPath,
 		StoredPath: storedPath,
-		SHA256:    hash,
-		SizeBytes: info.Size(),
-		ModTime:   info.ModTime(),
+		SHA256:     hash,
+		SizeBytes:  info.Size(),
+		ModTime:    info.ModTime(),
 	})
 }
 
@@ -111,8 +112,11 @@ func (s *Service) RestoreVersion(ctx context.Context, id int64, destBasePath str
 	return copyFile(v.StoredPath, destPath)
 }
 
-// Quarantine moves the file at destPath into the quarantine store and records it in the DB.
-func (s *Service) Quarantine(ctx context.Context, jobID int64, relPath, destPath string) (*db.QuarantineEntry, error) {
+// Quarantine moves the file at destPath into the job's destination-local quarantine
+// folder (<destRoot>/.tidemarq-quarantine/<relPath>/<unix_nano>) and records it in
+// the DB. Keeping the quarantine inside the destination means the rename is always
+// on the same filesystem, avoiding a full copy across volumes.
+func (s *Service) Quarantine(ctx context.Context, jobID int64, relPath, destPath, destRoot string) (*db.QuarantineEntry, error) {
 	info, err := os.Stat(destPath)
 	if os.IsNotExist(err) {
 		return nil, nil // file already gone
@@ -127,15 +131,16 @@ func (s *Service) Quarantine(ctx context.Context, jobID int64, relPath, destPath
 	}
 
 	quarantinePath := filepath.Join(
-		s.quarantineDir,
-		fmt.Sprintf("%d", jobID),
+		destRoot,
+		quarantineDirName,
 		filepath.FromSlash(relPath),
 		fmt.Sprintf("%d", time.Now().UnixNano()),
 	)
 	if err := os.MkdirAll(filepath.Dir(quarantinePath), 0o755); err != nil {
 		return nil, err
 	}
-	// Move (rename) where possible; fall back to copy+delete across volumes.
+	// Rename is an atomic, zero-copy operation on the same filesystem.
+	// Fall back to copy+delete if we somehow cross a volume boundary.
 	if err := os.Rename(destPath, quarantinePath); err != nil {
 		if err2 := copyFile(destPath, quarantinePath); err2 != nil {
 			return nil, fmt.Errorf("quarantine copy: %w", err2)
@@ -171,7 +176,9 @@ func (s *Service) GetQuarantineEntry(ctx context.Context, id int64) (*db.Quarant
 	return e, err
 }
 
-// RestoreQuarantine copies the quarantined file back to the destination.
+// RestoreQuarantine moves the quarantined file back to its original location in the
+// destination. Since the quarantine lives inside the destination directory, this is
+// again a same-filesystem rename — no data is copied.
 func (s *Service) RestoreQuarantine(ctx context.Context, id int64, destBasePath string) error {
 	e, err := s.GetQuarantineEntry(ctx, id)
 	if err != nil {
@@ -185,8 +192,27 @@ func (s *Service) RestoreQuarantine(ctx context.Context, id int64, destBasePath 
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 		return err
 	}
-	if err := copyFile(e.QuarantinePath, destPath); err != nil {
+	// Prefer atomic rename; fall back to copy if crossing a volume.
+	if err := os.Rename(e.QuarantinePath, destPath); err != nil {
+		if err2 := copyFile(e.QuarantinePath, destPath); err2 != nil {
+			return fmt.Errorf("restore copy: %w", err2)
+		}
+		if err2 := os.Remove(e.QuarantinePath); err2 != nil {
+			return fmt.Errorf("restore remove quarantine: %w", err2)
+		}
+	}
+	return s.db.DeleteQuarantineEntry(ctx, id)
+}
+
+// DeleteQuarantine permanently removes the quarantined file from disk and the DB.
+func (s *Service) DeleteQuarantine(ctx context.Context, id int64) error {
+	e, err := s.GetQuarantineEntry(ctx, id)
+	if err != nil {
 		return err
+	}
+	// Remove the file; ignore "not found" — it may have already been cleaned up.
+	if err := os.Remove(e.QuarantinePath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("deleting quarantined file: %w", err)
 	}
 	return s.db.DeleteQuarantineEntry(ctx, id)
 }

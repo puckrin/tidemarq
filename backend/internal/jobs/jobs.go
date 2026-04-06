@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -465,7 +466,11 @@ func (s *Service) registerTriggers(j *db.Job) error {
 	}
 
 	if j.WatchEnabled && s.watcher != nil {
-		if err := s.watcher.Add(j.ID, j.SourcePath, func(jobID int64) {
+		if _, statErr := os.Stat(j.SourcePath); os.IsNotExist(statErr) {
+			// Source path doesn't exist yet (e.g. external drive not mounted).
+			// Watch is skipped — the job still runs on cron or manual trigger.
+			log.Printf("jobs: watch for job %d (%s) skipped — source path not found: %s", j.ID, j.Name, j.SourcePath)
+		} else if err := s.watcher.Add(j.ID, j.SourcePath, func(jobID int64) {
 			if err := s.Run(context.Background(), jobID); err != nil && !errors.Is(err, ErrAlreadyRunning) {
 				log.Printf("jobs: watch trigger for job %d failed: %v", jobID, err)
 			}

@@ -63,7 +63,6 @@ func run(configPath string) error {
 	// Derive storage directories from the database path.
 	dataDir := filepath.Dir(cfg.Database.Path)
 	versionsDir := filepath.Join(dataDir, "versions")
-	quarantineDir := filepath.Join(dataDir, "quarantine")
 
 	watcher, err := watch.New()
 	if err != nil {
@@ -75,7 +74,7 @@ func run(configPath string) error {
 	manifestStore := manifest.New(database)
 	syncEngine := engine.New(manifestStore)
 	conflictsSvc := conflicts.New(database)
-	versionsSvc := versions.New(database, versionsDir, quarantineDir, 30)
+	versionsSvc := versions.New(database, versionsDir, 30)
 	mountsSvc := mounts.New(database, cfg.Auth.JWTSecret)
 	notifSvc := notifications.New(database, cfg.Auth.JWTSecret)
 	auditSvc := audit.New(database)

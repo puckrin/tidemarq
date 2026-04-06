@@ -15,7 +15,8 @@ import { DashboardView } from './views/DashboardView'
 import { JobsView }      from './views/JobsView'
 import { JobDetailView } from './views/JobDetailView'
 import { NewJobView }    from './views/NewJobView'
-import { ConflictsView } from './views/ConflictsView'
+import { ConflictsView }   from './views/ConflictsView'
+import { QuarantineView }  from './views/QuarantineView'
 import { AuditView }     from './views/AuditView'
 import { MountsView }    from './views/MountsView'
 import { SettingsView }  from './views/SettingsView'
@@ -81,6 +82,7 @@ function Shell() {
             {view === 'edit-job'   && jobId != null && <NewJobView onNav={nav} editJobId={jobId} />}
             {view === 'job-detail' && jobId != null && <JobDetailView jobId={jobId} onNav={nav} />}
             {view === 'conflicts'  && <ConflictsView />}
+            {view === 'quarantine' && <QuarantineView onNav={nav} />}
             {view === 'audit'      && <AuditView onNav={nav} />}
             {view === 'mounts'     && <MountsView />}
             {view === 'settings'   && <SettingsView />}

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ReactNode, CSSProperties } from 'react'
 
 type IconColor = 'teal' | 'grass' | 'coral' | 'amber'
 
@@ -8,7 +8,9 @@ interface Props {
   label: string
   value: string | number
   sub?: string
-  valueStyle?: React.CSSProperties
+  valueStyle?: CSSProperties
+  style?: CSSProperties
+  onClick?: () => void
 }
 
 const colorCls: Record<IconColor, string> = {
@@ -18,11 +20,9 @@ const colorCls: Record<IconColor, string> = {
   amber: 'si-amber',
 }
 
-import React from 'react'
-
-export function StatCard({ icon, color, label, value, sub, valueStyle }: Props) {
+export function StatCard({ icon, color, label, value, sub, valueStyle, style, onClick }: Props) {
   return (
-    <div className="stat-card">
+    <div className="stat-card" style={style} onClick={onClick}>
       <div className={`stat-icon ${colorCls[color]}`}>{icon}</div>
       <div className="stat-label">{label}</div>
       <div className="stat-val" style={valueStyle}>{value}</div>

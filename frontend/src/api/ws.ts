@@ -8,9 +8,14 @@ class WsClient {
   private listeners = new Set<Listener>()
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private stopped = false
+  private connectSeq = 0  // incremented on each connect() call; lets async continuations
+                          // detect if they've been superseded before they open a socket.
 
   async connect() {
     this.stopped = false
+    // Bump the sequence number so any in-flight connect() that is still awaiting
+    // getWsToken() knows it has been superseded and should not open a socket.
+    const seq = ++this.connectSeq
     // Close any existing connection before opening a new one so stale sockets
     // don't accumulate and share the listeners Set.
     if (this.ws) {
@@ -20,6 +25,9 @@ class WsClient {
     }
     try {
       const { token } = await getWsToken()
+      // If another connect() or disconnect() was called while we were awaiting the
+      // token, abandon this attempt — a newer connection is already in progress.
+      if (seq !== this.connectSeq || this.stopped) return
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
       const host = window.location.host
       this.ws = new WebSocket(`${proto}://${host}/ws?token=${token}`)
@@ -53,6 +61,7 @@ class WsClient {
 
   disconnect() {
     this.stopped = true
+    this.connectSeq++ // invalidate any in-flight connect() awaiting getWsToken
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null

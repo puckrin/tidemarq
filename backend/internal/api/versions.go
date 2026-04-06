@@ -86,6 +86,25 @@ func (s *Server) handleListQuarantine(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, list)
 }
 
+func (s *Server) handleDeleteQuarantine(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid quarantine id", "bad_request")
+		return
+	}
+
+	if err := s.versionsSvc.DeleteQuarantine(r.Context(), id); err != nil {
+		if errors.Is(err, versions.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "quarantine entry not found", "not_found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error(), "internal_error")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleRestoreQuarantine(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {

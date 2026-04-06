@@ -89,6 +89,8 @@ export const listQuarantine = (jobId?: number) =>
   request<QuarantineEntry[]>(`${BASE}/quarantine${jobId ? `?job_id=${jobId}` : ''}`)
 export const restoreQuarantine = (id: number) =>
   request<void>(`${BASE}/quarantine/${id}/restore`, { method: 'POST' })
+export const deleteQuarantineEntry = (id: number) =>
+  request<void>(`${BASE}/quarantine/${id}`, { method: 'DELETE' })
 
 // Mounts
 export const listMounts = () => request<Mount[]>(`${BASE}/mounts`)

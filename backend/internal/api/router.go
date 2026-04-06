@@ -71,6 +71,7 @@ func (s *Server) Routes() http.Handler {
 			r.Use(auth.RequireRole("admin", "operator"))
 			r.Post("/api/v1/versions/{id}/restore", s.handleRestoreVersion)
 			r.Post("/api/v1/quarantine/{id}/restore", s.handleRestoreQuarantine)
+			r.Delete("/api/v1/quarantine/{id}", s.handleDeleteQuarantine)
 		})
 
 		// Mounts: admin/operator write, all authenticated read.

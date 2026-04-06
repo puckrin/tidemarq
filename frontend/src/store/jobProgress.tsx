@@ -77,7 +77,12 @@ export function JobProgressProvider({ children }: { children: React.ReactNode })
       let newRecentFiles = existing.recentFiles
       if (e.current_file && (e.file_action === 'copied' || e.file_action === 'skipped' || e.file_action === 'removing')) {
         const entry: FileActivity = { relPath: e.current_file, action: e.file_action, ts: Date.now() }
-        newRecentFiles = [entry, ...existing.recentFiles].slice(0, 50)
+        // Dedup: skip if the most recent entry is identical (guards against any
+        // double WS delivery that may occur during reconnect race conditions).
+        const last = existing.recentFiles[0]
+        if (!last || last.relPath !== entry.relPath || last.action !== entry.action) {
+          newRecentFiles = [entry, ...existing.recentFiles].slice(0, 50)
+        }
       }
       updated = {
         filesDone:    e.files_done    ?? existing.filesDone,

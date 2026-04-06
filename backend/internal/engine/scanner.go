@@ -73,6 +73,11 @@ func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int) ([]FileInfo, 
 			return err
 		}
 		for _, e := range entries {
+			// Skip the destination-local quarantine folder so its contents are
+			// never treated as source or destination files during a sync run.
+			if e.IsDir && e.Name == ".tidemarq-quarantine" {
+				continue
+			}
 			var relPath string
 			if dir == "" || dir == "." {
 				relPath = e.Name
@@ -169,6 +174,11 @@ func scanDir(ctx context.Context, root string, workers int) ([]FileInfo, error) 
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		// Skip the destination-local quarantine folder so its contents are never
+		// treated as source or destination files during a sync run.
+		if d.IsDir() && d.Name() == ".tidemarq-quarantine" {
+			return filepath.SkipDir
 		}
 		if !d.Type().IsRegular() {
 			return nil

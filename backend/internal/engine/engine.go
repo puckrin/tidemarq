@@ -204,7 +204,17 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 	}
 
 	srcIndex := indexFiles(srcFiles)
-	total := len(srcFiles) + len(destFiles)
+
+	// Total = unique files across both sides. Files present in both are counted
+	// once (in the source pass); only destination-only files add to the total.
+	destOnlyCount := 0
+	for _, df := range destFiles {
+		if _, inSrc := srcIndex[df.RelPath]; !inSrc {
+			destOnlyCount++
+		}
+	}
+	total := len(srcFiles) + destOnlyCount
+
 	result := &Result{}
 	done := 0
 	var bytesDone int64
@@ -266,17 +276,8 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 	// Quarantine (or remove) destination files that no longer exist in source.
 	for _, destFi := range destFiles {
 		if _, inSrc := srcIndex[destFi.RelPath]; inSrc {
-			// File still exists on source — already counted in the source pass.
-			// Emit a counter-only progress tick (no CurrentFile) so the progress
-			// bar advances without adding a duplicate entry to the activity list.
-			done++
-			emitProgress(cfg.OnProgress, Progress{
-				FilesDone:    done,
-				FilesTotal:   total,
-				FilesSkipped: result.FilesSkipped,
-				BytesDone:    bytesDone,
-				RateKBs:      rt.rate(bytesDone),
-			})
+			// File still exists on source — already processed and counted in the
+			// source pass. Skip entirely to avoid double-counting.
 			continue
 		}
 		// For local destinations, attempt quarantine via the versions service.
@@ -284,7 +285,7 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 		localDst, isLocal := dstFS.(*mountfs.LocalFS)
 		if isLocal && cfg.VersionsSvc != nil {
 			destPath := filepath.Join(localDst.Root(), filepath.FromSlash(destFi.RelPath))
-			if _, err := cfg.VersionsSvc.Quarantine(ctx, cfg.JobID, destFi.RelPath, destPath); err != nil {
+			if _, err := cfg.VersionsSvc.Quarantine(ctx, cfg.JobID, destFi.RelPath, destPath, localDst.Root()); err != nil {
 				result.Errors = append(result.Errors, FileError{Path: destFi.RelPath, Err: fmt.Errorf("quarantine: %w", err)})
 			} else {
 				result.Quarantined++
@@ -335,7 +336,15 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 		strategy = "ask-user"
 	}
 
-	total := len(srcFiles) + len(destFiles)
+	// Total = unique files across both sides. Files present in both are counted
+	// once (in the source pass); only destination-only files add to the total.
+	destOnlyCount := 0
+	for _, df := range destFiles {
+		if _, inSrc := srcIndex[df.RelPath]; !inSrc {
+			destOnlyCount++
+		}
+	}
+	total := len(srcFiles) + destOnlyCount
 	result := &Result{}
 	done := 0
 	var bytesDone int64
@@ -471,15 +480,7 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 	// --- Dest-only files (new on destination side) ---
 	for _, destFi := range destFiles {
 		if _, inSrc := srcIndex[destFi.RelPath]; inSrc {
-			// Already counted in the source pass — counter-only tick, no file activity.
-			done++
-			emitProgress(cfg.OnProgress, Progress{
-				FilesDone:    done,
-				FilesTotal:   total,
-				FilesSkipped: result.FilesSkipped,
-				BytesDone:    bytesDone,
-				RateKBs:      rt.rate(bytesDone),
-			})
+			// Already processed and counted in the source pass — skip entirely.
 			continue
 		}
 
@@ -522,7 +523,7 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 				continue
 			}
 			if cfg.VersionsSvc != nil {
-				if _, err := cfg.VersionsSvc.Quarantine(ctx, cfg.JobID, destFi.RelPath, destPath); err != nil {
+				if _, err := cfg.VersionsSvc.Quarantine(ctx, cfg.JobID, destFi.RelPath, destPath, cfg.DestinationPath); err != nil {
 					result.Errors = append(result.Errors, FileError{Path: destFi.RelPath, Err: fmt.Errorf("quarantine: %w", err)})
 				} else {
 					result.Quarantined++

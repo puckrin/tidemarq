@@ -38,9 +38,9 @@ export function LoginView({ onLogin }: Props) {
       background: '#0A4452',   /* always sidebar teal — independent of theme */
     }}>
 
-      {/* Logo + wordmark */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 32 }}>
-        <svg width="44" height="44" viewBox="0 0 36 36" fill="none">
+      {/* Logo + wordmark — flex-start so SVG top = wordmark top; SVG sized to match text block height */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 32 }}>
+        <svg width="55" height="55" viewBox="0 0 36 36" fill="none" style={{ flexShrink: 0 }}>
           <rect x="0" y="27" width="36" height="4" rx="2" fill="#E0F4F7" opacity="0.28"/>
           <rect x="0" y="19" width="27" height="4" rx="2" fill="#E0F4F7" opacity="0.50"/>
           <rect x="0" y="11" width="18" height="4" rx="2" fill="#E0F4F7" opacity="0.75"/>
@@ -71,7 +71,7 @@ export function LoginView({ onLogin }: Props) {
 
         <form onSubmit={submit}>
           <div className="fg">
-            <label className="fl">Username</label>
+            <label className="fl" style={{ color: '#A3DDE6' }}>Username</label>
             <input
               className="fi"
               type="text"
@@ -84,7 +84,7 @@ export function LoginView({ onLogin }: Props) {
           </div>
 
           <div className="fg">
-            <label className="fl">Password</label>
+            <label className="fl" style={{ color: '#A3DDE6' }}>Password</label>
             <input
               className="fi"
               type="password"

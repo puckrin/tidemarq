@@ -124,6 +124,8 @@ export function NewJobView({ onNav, editJobId }: Props) {
 
   const save = useMutation({
     mutationFn: () => {
+      const watchDisabled = form.mode === 'two-way' &&
+        (form.source.mountId != null || form.dest.mountId != null)
       const payload = {
         name:               form.name,
         source_path:        form.source.path,
@@ -132,7 +134,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
         dest_mount_id:      form.dest.mountId ?? undefined,
         mode:               form.mode,
         conflict_strategy:  form.conflict_strategy,
-        watch_enabled:      form.watch_enabled,
+        watch_enabled:      watchDisabled ? false : form.watch_enabled,
         cron_schedule:      form.cron_schedule,
         bandwidth_limit_kb: form.bandwidth_limit_kb,
         full_checksum:      form.full_checksum,
@@ -257,9 +259,6 @@ export function NewJobView({ onNav, editJobId }: Props) {
                 />
                 <div className="fhint">
                   Select where synced files will be written.
-                  {form.mode !== 'two-way' && form.dest.mountId != null
-                    ? ' Two-way sync is not available with network mounts.'
-                    : ''}
                 </div>
               </div>
             </div>
@@ -271,21 +270,16 @@ export function NewJobView({ onNav, editJobId }: Props) {
           <div className="card mb16">
             <div className="card-title mb16">Step 3 — Sync Mode</div>
             <div className="mode-cards">
-              {MODE_OPTIONS.map(m => {
-                const mountsSelected = form.source.mountId != null || form.dest.mountId != null
-                const disabled = mountsSelected && m.value === 'two-way'
-                return (
-                  <div
-                    key={m.value}
-                    className={`mode-card${form.mode === m.value ? ' sel' : ''}${disabled ? ' disabled' : ''}`}
-                    style={disabled ? { opacity: 0.45, cursor: 'not-allowed' } : {}}
-                    onClick={() => !disabled && set({ mode: m.value })}
-                  >
-                    <div className="mc-title">{m.title}</div>
-                    <div className="mc-desc">{m.desc}{disabled ? ' (not available with network mounts)' : ''}</div>
-                  </div>
-                )
-              })}
+              {MODE_OPTIONS.map(m => (
+                <div
+                  key={m.value}
+                  className={`mode-card${form.mode === m.value ? ' sel' : ''}`}
+                  onClick={() => set({ mode: m.value })}
+                >
+                  <div className="mc-title">{m.title}</div>
+                  <div className="mc-desc">{m.desc}</div>
+                </div>
+              ))}
             </div>
             <div className="fg" style={{ marginBottom: 0, marginTop: 8 }}>
               <label className="fl">Conflict strategy</label>
@@ -308,20 +302,31 @@ export function NewJobView({ onNav, editJobId }: Props) {
           <div className="card mb16">
             <div className="card-title mb16">Step 4 — Schedule &amp; Bandwidth</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div className="flex gap12" style={{ alignItems: 'flex-start' }}>
-                <label className="toggle" style={{ marginTop: 3 }}>
-                  <input
-                    type="checkbox"
-                    checked={form.watch_enabled}
-                    onChange={e => set({ watch_enabled: e.target.checked })}
-                  />
-                  <span className="tog-sl"/>
-                </label>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>Filesystem watch</div>
-                  <div className="fs12 text2">Trigger sync immediately when files change on the source</div>
-                </div>
-              </div>
+              {(() => {
+                const watchDisabled = form.mode === 'two-way' &&
+                  (form.source.mountId != null || form.dest.mountId != null)
+                return (
+                  <div className="flex gap12" style={{ alignItems: 'flex-start', opacity: watchDisabled ? 0.5 : 1 }}>
+                    <label className="toggle" style={{ marginTop: 3 }}>
+                      <input
+                        type="checkbox"
+                        checked={!watchDisabled && form.watch_enabled}
+                        disabled={watchDisabled}
+                        onChange={e => !watchDisabled && set({ watch_enabled: e.target.checked })}
+                      />
+                      <span className="tog-sl"/>
+                    </label>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>Filesystem watch</div>
+                      <div className="fs12 text2">
+                        {watchDisabled
+                          ? 'Not available for two-way sync with network mounts — filesystem events cannot be received from remote paths. Use a cron schedule instead.'
+                          : 'Trigger sync immediately when files change on the source'}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
               <div className="fg" style={{ marginBottom: 0 }}>
                 <label className="fl">Cron schedule (optional)</label>
                 <input
@@ -387,13 +392,17 @@ export function NewJobView({ onNav, editJobId }: Props) {
               </div>
             )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13 }}>
-              {([
+              {(() => {
+                const watchDisabled = form.mode === 'two-way' &&
+                  (form.source.mountId != null || form.dest.mountId != null)
+                const effectiveWatch = !watchDisabled && form.watch_enabled
+                return ([
                 ['Name',             form.name || '—'],
                 ['Source',           <span className="mono fs12">{pathLabel(form.source, mounts)}</span>],
                 ['Destination',      <span className="mono fs12">{pathLabel(form.dest, mounts)}</span>],
                 ['Mode',             form.mode.replace(/-/g, ' ')],
                 ['Conflict strategy',form.conflict_strategy.replace(/-/g, ' ')],
-                ['FS watch',         form.watch_enabled ? 'Enabled' : 'Disabled'],
+                ['FS watch',         effectiveWatch ? 'Enabled' : watchDisabled ? 'Disabled (network mount)' : 'Disabled'],
                 ['Cron schedule',    form.cron_schedule || 'None'],
                 ['Bandwidth limit',  form.bandwidth_limit_kb > 0 ? `${form.bandwidth_limit_kb} KB/s` : 'Unlimited'],
                 ['Full SHA-256',     form.full_checksum ? 'Yes (slower, reads every file)' : 'No (metadata fast-path)'],
@@ -402,7 +411,8 @@ export function NewJobView({ onNav, editJobId }: Props) {
                   <span className="text3 fw5" style={{ minWidth: 160 }}>{label}</span>
                   <span>{val}</span>
                 </div>
-              ))}
+              ))
+              })()}
             </div>
           </div>
         )}

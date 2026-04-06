@@ -16,7 +16,7 @@ export function Card({ children, style, className = '', noPad }: CardProps) {
 }
 
 interface CardHeaderProps {
-  title: string
+  title: ReactNode
   action?: ReactNode
 }
 
