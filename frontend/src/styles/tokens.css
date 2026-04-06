@@ -1,0 +1,59 @@
+:root {
+  --deep-teal: #062C36;
+  --dark-teal: #0A4452;
+  --mid-teal: #0E5F6E;
+  --bright-teal: #1A8A9E;
+  --light-teal: #5DC4D4;
+  --pale-teal: #A3DDE6;
+  --ghost-teal: #E0F4F7;
+  --amber: #C27D1A;
+  --amber-light: #F5C842;
+  --coral: #C4432A;
+  --coral-light: #F28B74;
+  --violet: #5B3FA6;
+  --violet-light: #A98FE0;
+  --slate: #3D5166;
+  --slate-light: #8DA5B8;
+  --grass: #2E7D4F;
+  --grass-light: #7EC99A;
+  --black: #111111;
+  --dark-text: #2C2C2A;
+  --mid-text: #5F5E5A;
+  --light-border: #D3D1C7;
+  --white: #FFFFFF;
+  --sidebar-width: 256px;
+  --radius: 6px;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #062C36;
+  --surface: #0b3b48;
+  --card: #0d4354;
+  --elevated: #0f4d60;
+  --text: #E0F4F7;
+  --text2: #A3DDE6;
+  --text3: #5DC4D4;
+  --border: rgba(163, 221, 230, 0.14);
+  --sidebar: #0A4452;
+  --input-bg: rgba(224, 244, 247, 0.07);
+  --input-border: rgba(163, 221, 230, 0.22);
+  --hover: rgba(224, 244, 247, 0.05);
+  --active: rgba(14, 95, 110, 0.35);
+}
+
+[data-theme='light'] {
+  --bg: #EFF8FA;
+  --surface: #FFFFFF;
+  --card: #FFFFFF;
+  --elevated: #F5FAFB;
+  --text: #2C2C2A;
+  --text2: #5F5E5A;
+  --text3: #3D5166;
+  --border: #D3D1C7;
+  --sidebar: #0A4452;
+  --input-bg: #E0F4F7;
+  --input-border: #D3D1C7;
+  --hover: #E0F4F7;
+  --active: rgba(14, 95, 110, 0.1);
+}

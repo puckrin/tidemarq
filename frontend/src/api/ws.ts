@@ -1,0 +1,79 @@
+import type { WsEvent } from './types'
+import { getWsToken } from './client'
+
+type Listener = (event: WsEvent) => void
+
+class WsClient {
+  private ws: WebSocket | null = null
+  private listeners = new Set<Listener>()
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private stopped = false
+  private connectSeq = 0  // incremented on each connect() call; lets async continuations
+                          // detect if they've been superseded before they open a socket.
+
+  async connect() {
+    this.stopped = false
+    // Bump the sequence number so any in-flight connect() that is still awaiting
+    // getWsToken() knows it has been superseded and should not open a socket.
+    const seq = ++this.connectSeq
+    // Close any existing connection before opening a new one so stale sockets
+    // don't accumulate and share the listeners Set.
+    if (this.ws) {
+      this.ws.onclose = null // suppress the reconnect scheduler on this close
+      this.ws.close()
+      this.ws = null
+    }
+    try {
+      const { token } = await getWsToken()
+      // If another connect() or disconnect() was called while we were awaiting the
+      // token, abandon this attempt — a newer connection is already in progress.
+      if (seq !== this.connectSeq || this.stopped) return
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+      const host = window.location.host
+      this.ws = new WebSocket(`${proto}://${host}/ws?token=${token}`)
+
+      this.ws.onmessage = (e) => {
+        try {
+          const event: WsEvent = JSON.parse(e.data)
+          this.listeners.forEach(fn => fn(event))
+        } catch { /* ignore malformed messages */ }
+      }
+
+      this.ws.onclose = () => {
+        if (!this.stopped) this.scheduleReconnect()
+      }
+
+      this.ws.onerror = () => {
+        this.ws?.close()
+      }
+    } catch {
+      if (!this.stopped) this.scheduleReconnect()
+    }
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectTimer) return
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      this.connect()
+    }, 3000)
+  }
+
+  disconnect() {
+    this.stopped = true
+    this.connectSeq++ // invalidate any in-flight connect() awaiting getWsToken
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    this.ws?.close()
+    this.ws = null
+  }
+
+  subscribe(fn: Listener) {
+    this.listeners.add(fn)
+    return () => this.listeners.delete(fn)
+  }
+}
+
+export const wsClient = new WsClient()

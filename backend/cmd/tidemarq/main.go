@@ -6,11 +6,22 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/tidemarq/tidemarq/internal/api"
+	"github.com/tidemarq/tidemarq/internal/audit"
 	"github.com/tidemarq/tidemarq/internal/auth"
 	"github.com/tidemarq/tidemarq/internal/config"
+	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/db"
+	"github.com/tidemarq/tidemarq/internal/engine"
+	"github.com/tidemarq/tidemarq/internal/jobs"
+	"github.com/tidemarq/tidemarq/internal/manifest"
+	"github.com/tidemarq/tidemarq/internal/mounts"
+	"github.com/tidemarq/tidemarq/internal/notifications"
+	"github.com/tidemarq/tidemarq/internal/versions"
+	"github.com/tidemarq/tidemarq/internal/watch"
+	"github.com/tidemarq/tidemarq/internal/ws"
 	"github.com/tidemarq/tidemarq/migrations"
 )
 
@@ -49,8 +60,32 @@ func run(configPath string) error {
 		return fmt.Errorf("seeding admin: %w", err)
 	}
 
+	// Derive storage directories from the database path.
+	dataDir := filepath.Dir(cfg.Database.Path)
+	versionsDir := filepath.Join(dataDir, "versions")
+
+	watcher, err := watch.New()
+	if err != nil {
+		return fmt.Errorf("creating file watcher: %w", err)
+	}
+
+	hub := ws.New()
 	authSvc := auth.NewService(cfg.Auth.JWTSecret, cfg.Auth.JWTTTL)
-	srv := api.NewServer(cfg, database, authSvc)
+	manifestStore := manifest.New(database)
+	syncEngine := engine.New(manifestStore)
+	conflictsSvc := conflicts.New(database)
+	versionsSvc := versions.New(database, versionsDir, 30)
+	mountsSvc := mounts.New(database, cfg.Auth.JWTSecret)
+	notifSvc := notifications.New(database, cfg.Auth.JWTSecret)
+	auditSvc := audit.New(database)
+	jobsSvc := jobs.New(database, syncEngine, hub, watcher, versionsSvc, conflictsSvc, mountsSvc, auditSvc)
+
+	if err := jobsSvc.Start(context.Background()); err != nil {
+		return fmt.Errorf("starting job service: %w", err)
+	}
+	defer jobsSvc.Stop()
+
+	srv := api.NewServer(cfg, database, authSvc, jobsSvc, hub, conflictsSvc, versionsSvc, mountsSvc, notifSvc, auditSvc)
 
 	log.Printf("tidemarq %s starting — https://localhost:%d", api.Version, cfg.Server.HTTPSPort)
 	return srv.Run()
