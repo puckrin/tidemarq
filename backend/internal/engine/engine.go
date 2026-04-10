@@ -596,11 +596,14 @@ func (e *Engine) handleTwoWayConflict(
 	}
 
 	// Determine source FileInfo for metadata preservation.
-	fi := FileInfo{RelPath: relPath, AbsPath: srcPath, ModTime: srcState.ModTime}
+	fi := FileInfo{RelPath: relPath, ModTime: srcState.ModTime}
 	srcHash := srcState.SHA256
 	if winnerPath == destPath {
-		fi.AbsPath = destPath
+		fi.ModTime = destState.ModTime
 		srcHash = destState.SHA256
+	}
+	if info, err := os.Stat(winnerPath); err == nil {
+		fi.Permissions = info.Mode().Perm()
 	}
 
 	return e.transferFile(ctx, cfg, winnerPath, destPath, fi, srcHash)
@@ -864,6 +867,9 @@ func (e *Engine) transferFileFSStreaming(ctx context.Context, cfg Config, srcFS,
 
 	if lfs, ok := dstFS.(*mountfs.LocalFS); ok {
 		_ = lfs.Chtimes(fi.RelPath, fi.ModTime)
+		if fi.Permissions != 0 {
+			_ = lfs.Chmod(fi.RelPath, fi.Permissions)
+		}
 	}
 
 	if err := e.manifest.Put(ctx, &manifest.Entry{

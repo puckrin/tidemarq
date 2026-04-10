@@ -133,3 +133,8 @@ func (l *LocalFS) Root() string { return l.root }
 func (l *LocalFS) Chtimes(relPath string, mtime time.Time) error {
 	return os.Chtimes(l.abs(relPath), mtime, mtime)
 }
+
+// Chmod sets the permission bits of the file at relPath.
+func (l *LocalFS) Chmod(relPath string, mode fs.FileMode) error {
+	return os.Chmod(l.abs(relPath), mode)
+}
