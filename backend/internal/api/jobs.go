@@ -4,28 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/tidemarq/tidemarq/internal/db"
 	"github.com/tidemarq/tidemarq/internal/jobs"
 )
 
-type createJobRequest struct {
-	Name             string `json:"name"`
-	SourcePath       string `json:"source_path"`
-	DestinationPath  string `json:"destination_path"`
-	SourceMountID    *int64 `json:"source_mount_id,omitempty"`
-	DestMountID      *int64 `json:"dest_mount_id,omitempty"`
-	Mode             string `json:"mode"`
-	BandwidthLimitKB int64  `json:"bandwidth_limit_kb"`
-	ConflictStrategy string `json:"conflict_strategy"`
-	CronSchedule     string `json:"cron_schedule"`
-	WatchEnabled     bool   `json:"watch_enabled"`
-	FullChecksum     bool   `json:"full_checksum"`
-}
-
-type updateJobRequest struct {
+type jobRequest struct {
 	Name             string `json:"name"`
 	SourcePath       string `json:"source_path"`
 	DestinationPath  string `json:"destination_path"`
@@ -52,7 +36,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
-	var req createJobRequest
+	var req jobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body", "bad_request")
 		return
@@ -80,7 +64,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
-	id, err := parseJobID(r)
+	id, err := parseIDParam(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid job id", "bad_request")
 		return
@@ -100,13 +84,13 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
-	id, err := parseJobID(r)
+	id, err := parseIDParam(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid job id", "bad_request")
 		return
 	}
 
-	var req updateJobRequest
+	var req jobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body", "bad_request")
 		return
@@ -138,7 +122,7 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteJob(w http.ResponseWriter, r *http.Request) {
-	id, err := parseJobID(r)
+	id, err := parseIDParam(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid job id", "bad_request")
 		return
@@ -157,7 +141,7 @@ func (s *Server) handleDeleteJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
-	id, err := parseJobID(r)
+	id, err := parseIDParam(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid job id", "bad_request")
 		return
@@ -179,7 +163,7 @@ func (s *Server) handleRunJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePauseJob(w http.ResponseWriter, r *http.Request) {
-	id, err := parseJobID(r)
+	id, err := parseIDParam(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid job id", "bad_request")
 		return
@@ -201,7 +185,7 @@ func (s *Server) handlePauseJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResumeJob(w http.ResponseWriter, r *http.Request) {
-	id, err := parseJobID(r)
+	id, err := parseIDParam(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid job id", "bad_request")
 		return
@@ -222,6 +206,3 @@ func (s *Server) handleResumeJob(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func parseJobID(r *http.Request) (int64, error) {
-	return strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-}

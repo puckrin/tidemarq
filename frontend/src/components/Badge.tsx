@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 type BadgeVariant =
   | 'running'
   | 'synced'
@@ -9,7 +11,7 @@ type BadgeVariant =
 
 interface Props {
   variant: BadgeVariant
-  children: React.ReactNode
+  children: ReactNode
 }
 
 const cls: Record<BadgeVariant, string> = {
@@ -31,8 +33,6 @@ export function Badge({ variant, children }: Props) {
   )
 }
 
-export function TagBadge({ children }: { children: React.ReactNode }) {
+export function TagBadge({ children }: { children: ReactNode }) {
   return <span className="badge b-tag">{children}</span>
 }
-
-import React from 'react'

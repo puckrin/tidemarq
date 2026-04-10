@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -9,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
@@ -81,8 +83,9 @@ func (s *Server) Run() error {
 	// HTTP → HTTPS redirect.
 	httpAddr := fmt.Sprintf(":%d", s.cfg.Server.HTTPPort)
 	httpsPort := s.cfg.Server.HTTPSPort
-	go func() {
-		redirect := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	redirectSrv := &http.Server{
+		Addr: httpAddr,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			host := r.Host
 			if host == "" {
 				host = fmt.Sprintf("localhost:%d", httpsPort)
@@ -95,9 +98,14 @@ func (s *Server) Run() error {
 				}
 			}
 			http.Redirect(w, r, "https://"+host+r.URL.RequestURI(), http.StatusMovedPermanently)
-		})
-		http.ListenAndServe(httpAddr, redirect) //nolint:errcheck
+		}),
+	}
+	go func() {
+		if err := redirectSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("HTTP redirect server: %v", err)
+		}
 	}()
+	defer redirectSrv.Shutdown(context.Background()) //nolint:errcheck
 
 	// HTTPS server.
 	httpsAddr := fmt.Sprintf(":%d", s.cfg.Server.HTTPSPort)

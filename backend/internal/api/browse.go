@@ -74,16 +74,14 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		Entries: make([]browseEntry, 0, len(entries)),
 	}
 	for _, e := range entries {
-		fi, err := e.Info()
-		if err != nil {
-			continue
-		}
 		be := browseEntry{
 			Name:  e.Name(),
 			IsDir: e.IsDir(),
 		}
 		if !e.IsDir() {
-			be.Size = fi.Size()
+			if fi, err := e.Info(); err == nil {
+				be.Size = fi.Size()
+			}
 		}
 		resp.Entries = append(resp.Entries, be)
 	}

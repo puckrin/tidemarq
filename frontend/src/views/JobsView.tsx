@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Plus, Play, Square, Pencil, Trash2, RefreshCw, Search } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { listJobs, runJob, pauseJob, resumeJob, deleteJob } from '../api/client'
-import { Badge } from '../components/Badge'
+import { StatusBadge, ModePill } from '../components/JobFormatters'
 import { Button } from '../components/Button'
 import { Modal } from '../components/Modal'
 import { useToast } from '../components/Toast'
@@ -15,24 +15,6 @@ interface Props {
 
 type Filter = 'all' | 'running' | 'error' | 'disabled'
 
-function statusBadge(s: Job['status']) {
-  const map: Record<Job['status'], 'running' | 'synced' | 'pending' | 'error' | 'disabled'> = {
-    running: 'running', idle: 'synced', paused: 'pending', error: 'error', disabled: 'disabled',
-  }
-  const labels: Record<Job['status'], string> = {
-    running: 'Running', idle: 'Synced', paused: 'Stopped', error: 'Error', disabled: 'Disabled',
-  }
-  return <Badge variant={map[s]}>{labels[s]}</Badge>
-}
-
-function modePill(m: Job['mode']) {
-  const labels: Record<Job['mode'], string> = {
-    'one-way-backup': 'One-way backup',
-    'one-way-mirror': 'One-way mirror',
-    'two-way': 'Two-way',
-  }
-  return <span className="mode-pill">{labels[m]}</span>
-}
 
 function fmtDate(d: string | null) {
   if (!d) return '—'
@@ -114,7 +96,7 @@ export function JobsView({ onNav }: Props) {
                   <td>
                     <div className="fw5">{j.name}</div>
                     {j.last_error && <div className="fs11 text3" style={{ color: 'var(--coral-light)' }}>⚠ {j.last_error}</div>}
-                    {j.conflict_strategy !== 'ask-user' && !j.last_error && (
+                    {j.mode === 'two-way' && j.conflict_strategy !== 'ask-user' && !j.last_error && (
                       <div className="fs11 text3">Conflict: {j.conflict_strategy}</div>
                     )}
                   </td>
@@ -124,9 +106,9 @@ export function JobsView({ onNav }: Props) {
                       <div className="path-row"><span className="plabel">DST</span>{j.destination_path}</div>
                     </div>
                   </td>
-                  <td>{modePill(j.mode)}</td>
+                  <td><ModePill mode={j.mode} /></td>
                   <td className="td-muted fs12">{triggerLabel(j)}</td>
-                  <td>{statusBadge(j.status)}</td>
+                  <td><StatusBadge status={j.status} /></td>
                   <td className="td-muted">{fmtDate(j.last_run_at)}</td>
                   <td>
                     <div className="row-acts" onClick={e => e.stopPropagation()}>

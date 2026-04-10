@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -89,6 +90,26 @@ func TestScanDir_FileMetadata(t *testing.T) {
 	}
 	if f.Permissions == 0 {
 		t.Error("Permissions is zero")
+	}
+}
+
+// TestScanDir_CancelledContext verifies that a cancelled context causes scanDir
+// to return promptly with an error rather than processing the full directory tree.
+func TestScanDir_CancelledContext(t *testing.T) {
+	root := t.TempDir()
+	for i := range 20 {
+		writeFile(t, filepath.Join(root, fmt.Sprintf("file%d.txt", i)), "data")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before the scan starts
+
+	files, err := scanDir(ctx, root, 4)
+	if err == nil {
+		t.Fatal("expected an error from cancelled context, got nil")
+	}
+	if len(files) > 0 {
+		t.Errorf("expected no results from cancelled scan, got %d files", len(files))
 	}
 }
 

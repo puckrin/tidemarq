@@ -19,6 +19,7 @@ interface Props {
   current: View
   onNav: (v: View) => void
   conflictCount: number
+  quarantineCount: number
 }
 
 interface NavItem {
@@ -49,7 +50,7 @@ function initials(name: string) {
   return name.slice(0, 2).toUpperCase()
 }
 
-export function Sidebar({ current, onNav, conflictCount }: Props) {
+export function Sidebar({ current, onNav, conflictCount, quarantineCount }: Props) {
   const { user, logout } = useAuth()
   const [logoutModal, setLogoutModal] = useState(false)
 
@@ -92,7 +93,7 @@ export function Sidebar({ current, onNav, conflictCount }: Props) {
 
         <div className="nav-sep">Manage</div>
         {item(manageItems[0], conflictCount)}
-        {item(manageItems[1])}
+        {item(manageItems[1], quarantineCount)}
         {item(manageItems[2])}
         {item(manageItems[3])}
 

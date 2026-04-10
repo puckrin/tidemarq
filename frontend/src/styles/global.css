@@ -200,7 +200,7 @@ tr:hover .row-acts { opacity: 1; }
 /* ── CONFLICT PANEL ──────────────────────────────────── */
 .conflict-layout { display: flex; gap: 0; height: 100%; }
 .conflict-list-col { flex: 1; min-width: 0; }
-.conflict-detail { width: 400px; min-width: 400px; background: var(--surface); border-left: 1px solid var(--border); padding: 16px; overflow-y: auto; }
+.conflict-detail { width: 520px; min-width: 520px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
 .diff-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
 .diff-side { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .diff-hd { padding: 7px 12px; font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); }

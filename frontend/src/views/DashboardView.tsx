@@ -4,35 +4,17 @@ import { listJobs, listConflicts, listQuarantine } from '../api/client'
 import { StatCard } from '../components/StatCard'
 import { Card, CardHeader } from '../components/Card'
 import { Badge } from '../components/Badge'
+import { StatusBadge, ModePill } from '../components/JobFormatters'
 import { Button } from '../components/Button'
 import { ProgressBar } from '../components/ProgressBar'
-import type { Job } from '../api/types'
 import type { View } from '../components/Sidebar'
 import { useWsEvents } from '../hooks/useWsEvents'
-import { useCallback, useState, useEffect } from 'react'
+import { useCallback, useState } from 'react'
 import type { WsEvent } from '../api/types'
 import { useQueryClient } from '@tanstack/react-query'
 
 interface Props { onNav: (v: View, jobId?: number) => void }
 
-function statusBadge(s: Job['status']) {
-  const map: Record<Job['status'], 'running' | 'synced' | 'pending' | 'error' | 'disabled'> = {
-    running: 'running', idle: 'synced', paused: 'pending', error: 'error', disabled: 'disabled',
-  }
-  const labels: Record<Job['status'], string> = {
-    running: 'Running', idle: 'Synced', paused: 'Stopped', error: 'Error', disabled: 'Disabled',
-  }
-  return <Badge variant={map[s]}>{labels[s]}</Badge>
-}
-
-function modePill(m: Job['mode']) {
-  const labels: Record<Job['mode'], string> = {
-    'one-way-backup': 'One-way backup',
-    'one-way-mirror': 'One-way mirror',
-    'two-way': 'Two-way',
-  }
-  return <span className="mode-pill">{labels[m]}</span>
-}
 
 function fmtDate(d: string | null) {
   if (!d) return '—'
@@ -55,19 +37,11 @@ function timeLeft(expiresAt: string) {
 }
 
 export function DashboardView({ onNav }: Props) {
-  const { data: jobs = [] } = useQuery({ queryKey: ['jobs'], queryFn: listJobs, refetchInterval: 10000 })
-  const { data: conflicts = [] } = useQuery({ queryKey: ['conflicts'], queryFn: () => listConflicts(), refetchInterval: 15000 })
+  const { data: jobs = [] } = useQuery({ queryKey: ['jobs'], queryFn: listJobs, refetchInterval: 30000 })
+  const { data: conflicts = [] } = useQuery({ queryKey: ['conflicts'], queryFn: () => listConflicts(), refetchInterval: 30000 })
   const { data: quarantine = [] } = useQuery({ queryKey: ['quarantine'], queryFn: () => listQuarantine(), refetchInterval: 30000 })
 
   const qc = useQueryClient()
-
-  // Refresh all dashboard data on mount so previously-run jobs are reflected
-  // immediately, regardless of cache age or whether any WS events fired.
-  useEffect(() => {
-    qc.invalidateQueries({ queryKey: ['jobs'] })
-    qc.invalidateQueries({ queryKey: ['conflicts'] })
-    qc.invalidateQueries({ queryKey: ['quarantine'] })
-  }, [qc])
 
   const [progress, setProgress] = useState<Record<number, WsEvent>>({})
   const handler = useCallback((e: WsEvent) => {
@@ -77,6 +51,9 @@ export function DashboardView({ onNav }: Props) {
       qc.invalidateQueries({ queryKey: ['conflicts'] })
       qc.invalidateQueries({ queryKey: ['quarantine'] })
       qc.invalidateQueries({ queryKey: ['jobs'] })
+    }
+    if (e.event === 'conflict_resolved') {
+      qc.invalidateQueries({ queryKey: ['conflicts'] })
     }
   }, [qc])
   useWsEvents(handler)
@@ -245,8 +222,8 @@ export function DashboardView({ onNav }: Props) {
               {jobs.map(j => (
                 <tr key={j.id} onClick={() => onNav('job-detail', j.id)}>
                   <td className="fw5">{j.name}</td>
-                  <td>{modePill(j.mode)}</td>
-                  <td>{statusBadge(j.status)}</td>
+                  <td><ModePill mode={j.mode} /></td>
+                  <td><StatusBadge status={j.status} /></td>
                   <td className="td-muted">{fmtDate(j.last_run_at)}</td>
                   <td className="td-muted">{j.cron_schedule || (j.watch_enabled ? 'On change' : 'Manual')}</td>
                 </tr>

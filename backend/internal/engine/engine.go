@@ -426,6 +426,22 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 					result.Errors = append(result.Errors, FileError{Path: srcFi.RelPath, Err: ferr})
 				}
 
+			case srcChanged && destChanged:
+				// Both sides changed but Detect confirmed they are identical (same SHA256).
+				// This happens after conflict resolution: the winning version is on both sides
+				// but the manifest still holds the pre-conflict hash.  Update the manifest so
+				// subsequent runs see this file as in sync without re-detecting a conflict.
+				_ = e.manifest.Put(ctx, &manifest.Entry{
+					JobID:       cfg.JobID,
+					RelPath:     srcFi.RelPath,
+					SHA256:      srcState.SHA256,
+					SizeBytes:   srcState.Size,
+					ModTime:     srcState.ModTime,
+					Permissions: srcFi.Permissions,
+					SyncedAt:    time.Now(),
+				})
+				result.FilesSkipped++
+
 			case srcChanged && !destChanged:
 				// Source updated — copy src→dest.
 				if cfg.VersionsSvc != nil && destState.Exists {
@@ -556,21 +572,22 @@ func (e *Engine) handleTwoWayConflict(
 ) (int64, error) {
 	result.Conflicts++
 
-	// Record the conflict in the DB if a service is available.
-	if cfg.ConflictsSvc != nil {
-		_, _ = cfg.ConflictsSvc.Record(ctx, cfg.JobID, relPath, strategy, srcState, destState)
-	}
-
 	// Snapshot before auto-resolve overwrites anything.
 	if cfg.VersionsSvc != nil && destState.Exists {
 		_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, relPath, destPath)
 	}
 
-	// For ask-user: AutoResolve renames dest with .conflict suffix and returns srcPath.
-	// For auto strategies: returns the winning path.
-	winnerPath, err := conflicts.AutoResolve(strategy, srcPath, destPath, srcState, destState)
+	// For ask-user: AutoResolve renames dest with .conflict suffix and returns both
+	// the winning path and the path of the renamed file so it can be stored and cleaned
+	// up when the user resolves the conflict.  For auto strategies conflictPath is empty.
+	winnerPath, conflictPath, err := conflicts.AutoResolve(strategy, srcPath, destPath, srcState, destState)
 	if err != nil {
 		return 0, err
+	}
+
+	// Record the conflict in the DB after AutoResolve so conflict_path is known.
+	if cfg.ConflictsSvc != nil {
+		_, _ = cfg.ConflictsSvc.Record(ctx, cfg.JobID, relPath, strategy, conflictPath, srcState, destState)
 	}
 
 	// If winner is the destination, no copy needed.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,7 +91,7 @@ func TestRecord_AndGet(t *testing.T) {
 	src := conflicts.FileState{Exists: true, SHA256: "src-hash", Size: 100, ModTime: time.Now()}
 	dest := conflicts.FileState{Exists: true, SHA256: "dest-hash", Size: 200, ModTime: time.Now()}
 
-	c, err := svc.Record(context.Background(), jobID, "dir/file.txt", "ask-user", src, dest)
+	c, err := svc.Record(context.Background(), jobID, "dir/file.txt", "ask-user", "", src, dest)
 	if err != nil {
 		t.Fatalf("Record: %v", err)
 	}
@@ -119,8 +120,8 @@ func TestList_FiltersByJob(t *testing.T) {
 	src := conflicts.FileState{Exists: true, SHA256: "s", ModTime: time.Now()}
 	dest := conflicts.FileState{Exists: true, SHA256: "d", ModTime: time.Now()}
 
-	_, _ = svc.Record(context.Background(), jobID, "a.txt", "ask-user", src, dest)
-	_, _ = svc.Record(context.Background(), jobID, "b.txt", "ask-user", src, dest)
+	_, _ = svc.Record(context.Background(), jobID, "a.txt", "ask-user", "", src, dest)
+	_, _ = svc.Record(context.Background(), jobID, "b.txt", "ask-user", "", src, dest)
 
 	all, err := svc.List(context.Background(), 0)
 	if err != nil {
@@ -144,7 +145,7 @@ func TestAutoResolve_SourceWins(t *testing.T) {
 	src := conflicts.FileState{SHA256: "src", Size: 50, ModTime: time.Now()}
 	dest := conflicts.FileState{SHA256: "dest", Size: 100, ModTime: time.Now()}
 
-	winner, err := conflicts.AutoResolve("source-wins", "/src/file", "/dest/file", src, dest)
+	winner, _, err := conflicts.AutoResolve("source-wins", "/src/file", "/dest/file", src, dest)
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -158,7 +159,7 @@ func TestAutoResolve_DestinationWins(t *testing.T) {
 	src := conflicts.FileState{SHA256: "src", ModTime: time.Now()}
 	dest := conflicts.FileState{SHA256: "dest", ModTime: time.Now()}
 
-	winner, err := conflicts.AutoResolve("destination-wins", "/src/file", "/dest/file", src, dest)
+	winner, _, err := conflicts.AutoResolve("destination-wins", "/src/file", "/dest/file", src, dest)
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -175,7 +176,7 @@ func TestAutoResolve_NewestWins(t *testing.T) {
 	src := conflicts.FileState{SHA256: "src", ModTime: newer}
 	dest := conflicts.FileState{SHA256: "dest", ModTime: older}
 
-	winner, err := conflicts.AutoResolve("newest-wins", "/src/file", "/dest/file", src, dest)
+	winner, _, err := conflicts.AutoResolve("newest-wins", "/src/file", "/dest/file", src, dest)
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestAutoResolve_LargestWins(t *testing.T) {
 	src := conflicts.FileState{SHA256: "src", Size: 100, ModTime: time.Now()}
 	dest := conflicts.FileState{SHA256: "dest", Size: 200, ModTime: time.Now()}
 
-	winner, err := conflicts.AutoResolve("largest-wins", "/src/file", "/dest/file", src, dest)
+	winner, _, err := conflicts.AutoResolve("largest-wins", "/src/file", "/dest/file", src, dest)
 	if err != nil {
 		t.Fatalf("AutoResolve: %v", err)
 	}
@@ -198,8 +199,9 @@ func TestAutoResolve_LargestWins(t *testing.T) {
 	}
 }
 
-// TestAutoResolve_AskUser_RenamesDest verifies ask-user renames dest with conflict suffix.
-func TestAutoResolve_AskUser_RenamesDest(t *testing.T) {
+// TestAutoResolve_AskUser_LeavesDestUntouched verifies ask-user does not modify the
+// filesystem — conflict resolution is deferred to the user via the API.
+func TestAutoResolve_AskUser_LeavesDestUntouched(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "file.txt")
 	destPath := filepath.Join(dir, "dest_file.txt")
@@ -214,28 +216,198 @@ func TestAutoResolve_AskUser_RenamesDest(t *testing.T) {
 	src := conflicts.FileState{SHA256: "src", ModTime: time.Now()}
 	dest := conflicts.FileState{SHA256: "dest", ModTime: time.Now()}
 
-	winner, err := conflicts.AutoResolve("ask-user", srcPath, destPath, src, dest)
+	winner, conflictPath, err := conflicts.AutoResolve("ask-user", srcPath, destPath, src, dest)
 	if err != nil {
 		t.Fatalf("AutoResolve ask-user: %v", err)
 	}
-	// Source should be returned as winner.
-	if winner != srcPath {
-		t.Errorf("expected srcPath as winner, got %s", winner)
+	// Dest should be the winner — the engine will skip the copy.
+	if winner != destPath {
+		t.Errorf("expected destPath as winner, got %s", winner)
 	}
-	// Dest file should have been renamed, not still exist at original path.
-	if _, err := os.Stat(destPath); err == nil {
-		t.Error("expected dest to be renamed away but it still exists at original path")
+	// conflictPath must be empty — no file should have been created.
+	if conflictPath != "" {
+		t.Errorf("expected empty conflictPath, got %s", conflictPath)
 	}
-	// A .conflict.* file should exist in the same directory.
+	// Both original files must be untouched.
+	if _, err := os.Stat(destPath); err != nil {
+		t.Errorf("dest file should still exist: %v", err)
+	}
+	// No stray .conflict.* files should have been created.
 	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".conflict.") {
+			t.Errorf("unexpected conflict file created: %s", e.Name())
+		}
+	}
+}
+
+// TestResolve_KeepSource_CopiesSourceToDest verifies that keep-source overwrites dest
+// with the source version.  No .conflict file should exist before or after.
+func TestResolve_KeepSource_CopiesSourceToDest(t *testing.T) {
+	d := newTestDB(t)
+	jobID := seedJob(t, d)
+	svc := conflicts.New(d)
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "src", "file.txt")
+	destPath := filepath.Join(dir, "dest", "file.txt")
+	if err := os.MkdirAll(filepath.Dir(srcPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(srcPath, []byte("source version"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destPath, []byte("dest version"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	srcState := conflicts.FileState{Exists: true, SHA256: "s", ModTime: time.Now()}
+	destState := conflicts.FileState{Exists: true, SHA256: "d", ModTime: time.Now()}
+
+	// AutoResolve ask-user leaves both files untouched; engine records conflict.
+	_, conflictPath, err := conflicts.AutoResolve("ask-user", srcPath, destPath, srcState, destState)
+	if err != nil {
+		t.Fatalf("AutoResolve: %v", err)
+	}
+	c, err := svc.Record(context.Background(), jobID, "file.txt", "ask-user", conflictPath, srcState, destState)
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	if err := svc.Resolve(context.Background(), c.ID, "keep-source", srcPath, destPath); err != nil {
+		t.Fatalf("Resolve keep-source: %v", err)
+	}
+
+	// Dest must hold source content.
+	got, _ := os.ReadFile(destPath)
+	if string(got) != "source version" {
+		t.Errorf("dest content after keep-source: got %q, want %q", string(got), "source version")
+	}
+	// No stray .conflict.* files.
+	entries, _ := os.ReadDir(filepath.Dir(destPath))
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".conflict.") {
+			t.Errorf("unexpected conflict file after keep-source: %s", e.Name())
+		}
+	}
+}
+
+// TestResolve_KeepDest_CopiesDestToSource verifies that keep-dest propagates the
+// destination version back to the source so both sides are consistent.
+func TestResolve_KeepDest_CopiesDestToSource(t *testing.T) {
+	d := newTestDB(t)
+	jobID := seedJob(t, d)
+	svc := conflicts.New(d)
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "src", "file.txt")
+	destPath := filepath.Join(dir, "dest", "file.txt")
+	if err := os.MkdirAll(filepath.Dir(srcPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(srcPath, []byte("source version"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destPath, []byte("dest version"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	srcState := conflicts.FileState{Exists: true, SHA256: "s", ModTime: time.Now()}
+	destState := conflicts.FileState{Exists: true, SHA256: "d", ModTime: time.Now()}
+
+	_, conflictPath, err := conflicts.AutoResolve("ask-user", srcPath, destPath, srcState, destState)
+	if err != nil {
+		t.Fatalf("AutoResolve: %v", err)
+	}
+	c, err := svc.Record(context.Background(), jobID, "file.txt", "ask-user", conflictPath, srcState, destState)
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	if err := svc.Resolve(context.Background(), c.ID, "keep-dest", srcPath, destPath); err != nil {
+		t.Fatalf("Resolve keep-dest: %v", err)
+	}
+
+	// Dest must still hold original dest content.
+	gotDest, _ := os.ReadFile(destPath)
+	if string(gotDest) != "dest version" {
+		t.Errorf("dest content after keep-dest: got %q, want %q", string(gotDest), "dest version")
+	}
+	// Source must have been updated to match dest.
+	gotSrc, _ := os.ReadFile(srcPath)
+	if string(gotSrc) != "dest version" {
+		t.Errorf("src content after keep-dest: got %q, want %q", string(gotSrc), "dest version")
+	}
+}
+
+// TestResolve_KeepBoth_CreatesConflictFileAtResolutionTime verifies that keep-both
+// creates the .conflict.<ts> file only when the user resolves, not at detection time.
+func TestResolve_KeepBoth_CreatesConflictFileAtResolutionTime(t *testing.T) {
+	d := newTestDB(t)
+	jobID := seedJob(t, d)
+	svc := conflicts.New(d)
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "src", "file.txt")
+	destPath := filepath.Join(dir, "dest", "file.txt")
+	if err := os.MkdirAll(filepath.Dir(srcPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(srcPath, []byte("source version"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destPath, []byte("dest version"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	srcState := conflicts.FileState{Exists: true, SHA256: "s", ModTime: time.Now()}
+	destState := conflicts.FileState{Exists: true, SHA256: "d", ModTime: time.Now()}
+
+	_, conflictPath, err := conflicts.AutoResolve("ask-user", srcPath, destPath, srcState, destState)
+	if err != nil {
+		t.Fatalf("AutoResolve: %v", err)
+	}
+	// Verify no conflict file was created at detection time.
+	if conflictPath != "" {
+		t.Fatalf("expected no conflict file at detection, got %s", conflictPath)
+	}
+
+	c, err := svc.Record(context.Background(), jobID, "file.txt", "ask-user", conflictPath, srcState, destState)
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	if err := svc.Resolve(context.Background(), c.ID, "keep-both", srcPath, destPath); err != nil {
+		t.Fatalf("Resolve keep-both: %v", err)
+	}
+
+	// dest must hold source version.
+	gotDest, _ := os.ReadFile(destPath)
+	if string(gotDest) != "source version" {
+		t.Errorf("dest content after keep-both: got %q, want source version", string(gotDest))
+	}
+	// A .conflict.* file holding the dest version must now exist.
+	entries, _ := os.ReadDir(filepath.Dir(destPath))
 	found := false
 	for _, e := range entries {
-		if len(e.Name()) > len("dest_file.txt.conflict.") &&
-			e.Name()[:len("dest_file.txt.conflict.")] == "dest_file.txt.conflict." {
+		if strings.Contains(e.Name(), ".conflict.") {
 			found = true
+			content, _ := os.ReadFile(filepath.Join(filepath.Dir(destPath), e.Name()))
+			if string(content) != "dest version" {
+				t.Errorf("conflict file content: got %q, want dest version", string(content))
+			}
 		}
 	}
 	if !found {
-		t.Error("expected a .conflict.<timestamp> file to be created")
+		t.Error("expected a .conflict.<ts> file to be created by keep-both")
 	}
 }

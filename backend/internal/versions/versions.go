@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tidemarq/tidemarq/internal/db"
@@ -150,6 +151,10 @@ func (s *Service) Quarantine(ctx context.Context, jobID int64, relPath, destPath
 		}
 	}
 
+	// Remove any empty ancestor directories left behind in the destination
+	// (bottom-up, stopping at destRoot).
+	pruneEmptyDirs(filepath.Dir(destPath), destRoot)
+
 	now := time.Now().UTC()
 	return s.db.CreateQuarantineEntry(ctx, &db.QuarantineEntry{
 		JobID:          jobID,
@@ -201,11 +206,18 @@ func (s *Service) RestoreQuarantine(ctx context.Context, id int64, destBasePath 
 			return fmt.Errorf("restore remove quarantine: %w", err2)
 		}
 	}
-	return s.db.DeleteQuarantineEntry(ctx, id)
+
+	// Clean up empty subdirectories in the quarantine tree, including the
+	// .tidemarq-quarantine root itself if it is now empty.
+	pruneEmptyDirs(filepath.Dir(e.QuarantinePath), destBasePath)
+
+	return s.db.MarkQuarantineRemoved(ctx, id, "restored")
 }
 
-// DeleteQuarantine permanently removes the quarantined file from disk and the DB.
-func (s *Service) DeleteQuarantine(ctx context.Context, id int64) error {
+// DeleteQuarantine permanently removes the quarantined file from disk and marks the
+// DB record as deleted (keeping it for the "recently removed" history list).
+// destBasePath is the job's destination root, used to bound the empty-dir cleanup.
+func (s *Service) DeleteQuarantine(ctx context.Context, id int64, destBasePath string) error {
 	e, err := s.GetQuarantineEntry(ctx, id)
 	if err != nil {
 		return err
@@ -214,7 +226,48 @@ func (s *Service) DeleteQuarantine(ctx context.Context, id int64) error {
 	if err := os.Remove(e.QuarantinePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("deleting quarantined file: %w", err)
 	}
-	return s.db.DeleteQuarantineEntry(ctx, id)
+
+	// Clean up empty subdirectories in the quarantine tree, including the
+	// .tidemarq-quarantine root itself if it is now empty.
+	pruneEmptyDirs(filepath.Dir(e.QuarantinePath), destBasePath)
+
+	return s.db.MarkQuarantineRemoved(ctx, id, "deleted")
+}
+
+// ListRemovedQuarantine returns quarantine entries that have been restored or deleted,
+// optionally filtered by job. Pass jobID=0 to list across all jobs.
+func (s *Service) ListRemovedQuarantine(ctx context.Context, jobID int64) ([]*db.QuarantineEntry, error) {
+	return s.db.ListRemovedQuarantineEntries(ctx, jobID)
+}
+
+// ClearRemovedQuarantine permanently removes all non-active quarantine DB records,
+// optionally scoped to a single job. Pass jobID=0 to clear all.
+func (s *Service) ClearRemovedQuarantine(ctx context.Context, jobID int64) error {
+	return s.db.ClearRemovedQuarantineEntries(ctx, jobID)
+}
+
+// pruneEmptyDirs removes dir and each empty ancestor up to (but not including)
+// root, walking bottom-up. It stops as soon as a non-empty directory is found
+// or the root boundary is reached. Errors (permissions, non-empty dirs) are
+// silently ignored — cleanup is best-effort.
+func pruneEmptyDirs(dir, root string) {
+	root = filepath.Clean(root)
+	for {
+		dir = filepath.Clean(dir)
+		// Stop at or above the root boundary.
+		rel, err := filepath.Rel(root, dir)
+		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			return
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 0 {
+			return
+		}
+		if err := os.Remove(dir); err != nil {
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
 }
 
 // hashFile computes SHA-256 of the file at path.

@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/tidemarq/tidemarq/internal/mounts"
 )
 
@@ -42,7 +40,7 @@ func (s *Server) handleCreateMount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetMount(w http.ResponseWriter, r *http.Request) {
-	id, err := parseMountID(r)
+	id, err := parseIDParam(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mount id", "bad_request")
 		return
@@ -61,7 +59,7 @@ func (s *Server) handleGetMount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateMount(w http.ResponseWriter, r *http.Request) {
-	id, err := parseMountID(r)
+	id, err := parseIDParam(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mount id", "bad_request")
 		return
@@ -90,7 +88,7 @@ func (s *Server) handleUpdateMount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteMount(w http.ResponseWriter, r *http.Request) {
-	id, err := parseMountID(r)
+	id, err := parseIDParam(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mount id", "bad_request")
 		return
@@ -107,7 +105,7 @@ func (s *Server) handleDeleteMount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTestMount(w http.ResponseWriter, r *http.Request) {
-	id, err := parseMountID(r)
+	id, err := parseIDParam(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mount id", "bad_request")
 		return
@@ -123,6 +121,3 @@ func (s *Server) handleTestMount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func parseMountID(r *http.Request) (int64, error) {
-	return strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-}

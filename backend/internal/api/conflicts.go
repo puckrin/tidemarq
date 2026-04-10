@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/db"
+	"github.com/tidemarq/tidemarq/internal/ws"
 )
 
 func (s *Server) handleListConflicts(w http.ResponseWriter, r *http.Request) {
@@ -91,5 +92,24 @@ func (s *Server) handleResolveConflict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.hub.Broadcast(ws.Event{JobID: c.JobID, Event: "conflict_resolved"})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleClearResolvedConflicts handles POST /api/v1/conflicts/clear-resolved.
+func (s *Server) handleClearResolvedConflicts(w http.ResponseWriter, r *http.Request) {
+	var jobID int64
+	if q := r.URL.Query().Get("job_id"); q != "" {
+		id, err := strconv.ParseInt(q, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid job_id", "bad_request")
+			return
+		}
+		jobID = id
+	}
+	if err := s.conflictsSvc.ClearResolved(r.Context(), jobID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clear resolved conflicts", "internal_error")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

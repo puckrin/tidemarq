@@ -86,6 +86,45 @@ func (s *Server) handleListQuarantine(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, list)
 }
 
+func (s *Server) handleListRemovedQuarantine(w http.ResponseWriter, r *http.Request) {
+	var jobID int64
+	if q := r.URL.Query().Get("job_id"); q != "" {
+		id, err := strconv.ParseInt(q, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid job_id", "bad_request")
+			return
+		}
+		jobID = id
+	}
+
+	list, err := s.versionsSvc.ListRemovedQuarantine(r.Context(), jobID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list removed quarantine", "internal_error")
+		return
+	}
+	if list == nil {
+		list = []*db.QuarantineEntry{}
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleClearRemovedQuarantine(w http.ResponseWriter, r *http.Request) {
+	var jobID int64
+	if q := r.URL.Query().Get("job_id"); q != "" {
+		id, err := strconv.ParseInt(q, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid job_id", "bad_request")
+			return
+		}
+		jobID = id
+	}
+	if err := s.versionsSvc.ClearRemovedQuarantine(r.Context(), jobID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clear removed quarantine", "internal_error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleDeleteQuarantine(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -93,7 +132,23 @@ func (s *Server) handleDeleteQuarantine(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := s.versionsSvc.DeleteQuarantine(r.Context(), id); err != nil {
+	e, err := s.versionsSvc.GetQuarantineEntry(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, versions.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "quarantine entry not found", "not_found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get quarantine entry", "internal_error")
+		return
+	}
+
+	job, err := s.jobsSvc.Get(r.Context(), e.JobID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get job", "internal_error")
+		return
+	}
+
+	if err := s.versionsSvc.DeleteQuarantine(r.Context(), id, job.DestinationPath); err != nil {
 		if errors.Is(err, versions.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "quarantine entry not found", "not_found")
 			return

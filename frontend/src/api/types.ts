@@ -67,6 +67,9 @@ export interface QuarantineEntry {
   size_bytes: number
   deleted_at: string
   expires_at: string
+  /** "active" while in quarantine; "restored" or "deleted" after action taken. */
+  status: 'active' | 'restored' | 'deleted'
+  removed_at: string | null
 }
 
 export interface User {
@@ -142,7 +145,7 @@ export interface HealthResponse {
 
 export interface WsEvent {
   job_id: number
-  event: 'started' | 'progress' | 'paused' | 'completed' | 'error'
+  event: 'started' | 'progress' | 'paused' | 'completed' | 'error' | 'conflict_resolved'
   files_done?: number
   files_total?: number
   files_skipped?: number

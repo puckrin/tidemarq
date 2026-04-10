@@ -85,7 +85,7 @@ func (db *DB) GetJobByID(ctx context.Context, id int64) (*Job, error) {
 		        conflict_strategy, cron_schedule, watch_enabled, full_checksum, last_run_at, last_error, created_at, updated_at
 		 FROM jobs WHERE id = ?`, id,
 	)
-	return scanJob(row)
+	return scanJobFrom(row)
 }
 
 // ListJobs returns all jobs ordered by name.
@@ -102,7 +102,7 @@ func (db *DB) ListJobs(ctx context.Context) ([]*Job, error) {
 
 	var jobs []*Job
 	for rows.Next() {
-		j, err := scanJobRows(rows)
+		j, err := scanJobFrom(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -165,10 +165,14 @@ func (db *DB) UpdateJobStatus(ctx context.Context, id int64, status string, last
 	return err
 }
 
-func scanJob(row *sql.Row) (*Job, error) {
+type jobScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanJobFrom(s jobScanner) (*Job, error) {
 	j := &Job{}
 	var watchEnabled, fullChecksum int
-	err := row.Scan(
+	err := s.Scan(
 		&j.ID, &j.Name, &j.SourcePath, &j.DestinationPath, &j.SourceMountID, &j.DestMountID,
 		&j.Mode, &j.Status, &j.BandwidthLimitKB, &j.ConflictStrategy, &j.CronSchedule,
 		&watchEnabled, &fullChecksum,
@@ -177,23 +181,6 @@ func scanJob(row *sql.Row) (*Job, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	if err != nil {
-		return nil, err
-	}
-	j.WatchEnabled = watchEnabled != 0
-	j.FullChecksum = fullChecksum != 0
-	return j, nil
-}
-
-func scanJobRows(rows *sql.Rows) (*Job, error) {
-	j := &Job{}
-	var watchEnabled, fullChecksum int
-	err := rows.Scan(
-		&j.ID, &j.Name, &j.SourcePath, &j.DestinationPath, &j.SourceMountID, &j.DestMountID,
-		&j.Mode, &j.Status, &j.BandwidthLimitKB, &j.ConflictStrategy, &j.CronSchedule,
-		&watchEnabled, &fullChecksum,
-		&j.LastRunAt, &j.LastError, &j.CreatedAt, &j.UpdatedAt,
-	)
 	if err != nil {
 		return nil, err
 	}

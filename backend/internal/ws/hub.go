@@ -11,7 +11,7 @@ import (
 // Event is a progress or lifecycle notification broadcast to all WS clients.
 type Event struct {
 	JobID        int64   `json:"job_id"`
-	Event        string  `json:"event"` // "started","progress","paused","completed","error"
+	Event        string  `json:"event"` // "started","progress","paused","completed","error","conflict_resolved"
 	FilesDone    int     `json:"files_done,omitempty"`
 	FilesTotal   int     `json:"files_total,omitempty"`
 	FilesSkipped int     `json:"files_skipped,omitempty"`
