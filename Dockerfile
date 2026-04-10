@@ -21,7 +21,7 @@ FROM gcr.io/distroless/static-debian12
 
 COPY --from=backend-builder /build/tidemarq /tidemarq
 COPY --from=frontend-builder /frontend/dist /app/frontend/dist
-COPY tidemarq.yaml /etc/tidemarq/tidemarq.yaml
+COPY tidemarq.example.yaml /etc/tidemarq/tidemarq.yaml
 
 EXPOSE 8080 8443
 
