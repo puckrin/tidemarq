@@ -1,0 +1,35 @@
+# tidemarq example configuration
+# Copy this file to tidemarq.yaml and fill in the required values,
+# or supply them via environment variables (TIDEMARQ_* prefix).
+#
+# Required values are marked REQUIRED — the server will refuse to start
+# without them. Everything else has a sensible default.
+
+server:
+  http_port: 8080      # HTTP (redirects to HTTPS)
+  https_port: 8443     # HTTPS
+  data_dir: /data      # Persistent storage root (mount a volume here)
+  static_dir: /app/frontend/dist
+
+database:
+  path: /data/tidemarq.db
+
+tls:
+  # Leave blank to use the auto-generated self-signed certificate.
+  # Set both to use your own certificate (e.g. from Let's Encrypt).
+  cert_file: /data/certs/server.crt
+  key_file:  /data/certs/server.key
+
+auth:
+  # REQUIRED — minimum 32 characters.
+  # Generate one with: openssl rand -base64 32
+  # Environment variable: TIDEMARQ_AUTH_JWT_SECRET
+  jwt_secret: ""
+  jwt_ttl: 24h
+
+admin:
+  # Credentials for the built-in admin account created on first start.
+  # REQUIRED — password must not be left empty.
+  # Environment variable: TIDEMARQ_ADMIN_PASSWORD
+  username: admin
+  password: ""
