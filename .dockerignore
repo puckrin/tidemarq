@@ -1,8 +1,38 @@
+# Version control
 .git
-.claude
+.gitignore
+
+# Claude Code
+.claude/
+
+# Local config and secrets
+tidemarq.yaml
+tidemarq.*.yaml
+.env
+.env.*
+
+# Dev data
+dev-data/
+data/
+
+# Build artefacts
+backend/tidemarq
+backend/tidemarq.exe
+backend/bin/
+backend/tmp/
+backend/vendor/
+
+# Frontend — built inside Docker, not needed in context
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Docs and design files
 *.md
 *.docx
-*.html
-frontend/node_modules
-frontend/dist
-backend/vendor
+prototype.html
+sync_app_spec.md
+
+# OS
+.DS_Store
+Thumbs.db
