@@ -5,7 +5,9 @@ import (
 	"time"
 )
 
-const Version = "0.1.0"
+// Version is set at build time via -ldflags "-X github.com/tidemarq/tidemarq/internal/api.Version=x.y.z".
+// Falls back to "dev" when built without ldflags (local development).
+var Version = "dev"
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	dbStatus := "ok"

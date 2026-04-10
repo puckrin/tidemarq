@@ -10,11 +10,15 @@ RUN npm run build
 # ── Backend build ─────────────────────────────────────────────────────────────
 FROM golang:1.23-alpine AS backend-builder
 
+ARG VERSION=dev
+
 WORKDIR /build
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o tidemarq ./cmd/tidemarq
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w -X github.com/tidemarq/tidemarq/internal/api.Version=${VERSION}" \
+    -o tidemarq ./cmd/tidemarq
 
 # ── Final image ───────────────────────────────────────────────────────────────
 FROM gcr.io/distroless/static-debian12
