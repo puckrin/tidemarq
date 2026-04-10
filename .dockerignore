@@ -5,9 +5,10 @@
 # Claude Code
 .claude/
 
-# Local config and secrets
+# Local config and secrets — keep the example so the Dockerfile can COPY it
 tidemarq.yaml
 tidemarq.*.yaml
+!tidemarq.example.yaml
 .env
 .env.*
 
