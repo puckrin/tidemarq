@@ -3,8 +3,6 @@ package conflicts
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tidemarq/tidemarq/internal/db"
+	"github.com/tidemarq/tidemarq/internal/hasher"
 )
 
 // ErrNotFound is returned when a conflict record does not exist.
@@ -20,15 +19,16 @@ var ErrNotFound = errors.New("conflict not found")
 
 // FileState holds the current on-disk state of one side of a file.
 type FileState struct {
-	AbsPath string
-	SHA256  string
-	Size    int64
-	ModTime time.Time
-	Exists  bool
+	AbsPath     string
+	ContentHash string
+	HashAlgo    string
+	Size        int64
+	ModTime     time.Time
+	Exists      bool
 }
 
-// StatFile reads the current state of a file at absPath.
-func StatFile(absPath string) (FileState, error) {
+// StatFile reads the current state of a file at absPath using the given hash algorithm.
+func StatFile(absPath, algo string) (FileState, error) {
 	info, err := os.Stat(absPath)
 	if os.IsNotExist(err) {
 		return FileState{AbsPath: absPath, Exists: false}, nil
@@ -37,17 +37,18 @@ func StatFile(absPath string) (FileState, error) {
 		return FileState{}, err
 	}
 
-	hash, err := hashFile(absPath)
+	hash, err := hasher.HashFile(algo, absPath)
 	if err != nil {
 		return FileState{}, err
 	}
 
 	return FileState{
-		AbsPath: absPath,
-		SHA256:  hash,
-		Size:    info.Size(),
-		ModTime: info.ModTime(),
-		Exists:  true,
+		AbsPath:     absPath,
+		ContentHash: hash,
+		HashAlgo:    algo,
+		Size:        info.Size(),
+		ModTime:     info.ModTime(),
+		Exists:      true,
 	}, nil
 }
 
@@ -57,9 +58,9 @@ func StatFile(absPath string) (FileState, error) {
 // same content (e.g. after conflict resolution) isConflict is false.
 // Returns (isConflict, srcChanged, destChanged).
 func Detect(syncedHash string, src, dest FileState) (isConflict, srcChanged, destChanged bool) {
-	srcChanged = src.Exists && src.SHA256 != syncedHash
-	destChanged = dest.Exists && dest.SHA256 != syncedHash
-	isConflict = srcChanged && destChanged && src.SHA256 != dest.SHA256
+	srcChanged = src.Exists && src.ContentHash != syncedHash
+	destChanged = dest.Exists && dest.ContentHash != syncedHash
+	isConflict = srcChanged && destChanged && src.ContentHash != dest.ContentHash
 	return
 }
 
@@ -78,16 +79,18 @@ func New(database *db.DB) *Service {
 // conflicts; pass empty string if no such file was created.
 func (s *Service) Record(ctx context.Context, jobID int64, relPath, strategy, conflictPath string, src, dest FileState) (*db.Conflict, error) {
 	return s.db.CreateConflict(ctx, db.CreateConflictParams{
-		JobID:        jobID,
-		RelPath:      relPath,
-		SrcSHA256:    src.SHA256,
-		DestSHA256:   dest.SHA256,
-		SrcModTime:   src.ModTime,
-		DestModTime:  dest.ModTime,
-		SrcSize:      src.Size,
-		DestSize:     dest.Size,
-		Strategy:     strategy,
-		ConflictPath: conflictPath,
+		JobID:           jobID,
+		RelPath:         relPath,
+		SrcContentHash:  src.ContentHash,
+		DestContentHash: dest.ContentHash,
+		SrcHashAlgo:     src.HashAlgo,
+		DestHashAlgo:    dest.HashAlgo,
+		SrcModTime:      src.ModTime,
+		DestModTime:     dest.ModTime,
+		SrcSize:         src.Size,
+		DestSize:        dest.Size,
+		Strategy:        strategy,
+		ConflictPath:    conflictPath,
 	})
 }
 
@@ -127,9 +130,11 @@ func (s *Service) Resolve(ctx context.Context, id int64, action, srcPath, destPa
 
 	switch action {
 	case "keep-source":
-		// Copy source → dest (dest may already match, but this is idempotent).
-		if err := copyFile(srcPath, destPath); err != nil {
-			return fmt.Errorf("keep-source copy: %w", err)
+		// Copy source → dest only if source exists on disk.
+		if _, statErr := os.Stat(srcPath); statErr == nil {
+			if err := copyFile(srcPath, destPath); err != nil {
+				return fmt.Errorf("keep-source copy: %w", err)
+			}
 		}
 		// Clean up any .conflict.<ts> file that was preserved from an older
 		// conflict detection run.
@@ -144,14 +149,16 @@ func (s *Service) Resolve(ctx context.Context, id int64, action, srcPath, destPa
 			if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("keep-dest remove source copy: %w", err)
 			}
-			if err := os.Rename(*c.ConflictPath, destPath); err != nil {
+			if err := os.Rename(*c.ConflictPath, destPath); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("keep-dest restore: %w", err)
 			}
 		} else {
 			// Normal path: dest still holds the original destination content.
-			// Copy dest → src so both sides become consistent.
-			if err := copyFile(destPath, srcPath); err != nil {
-				return fmt.Errorf("keep-dest copy to source: %w", err)
+			// Copy dest → src so both sides become consistent, if dest exists.
+			if _, statErr := os.Stat(destPath); statErr == nil {
+				if err := copyFile(destPath, srcPath); err != nil {
+					return fmt.Errorf("keep-dest copy to source: %w", err)
+				}
 			}
 		}
 
@@ -161,13 +168,18 @@ func (s *Service) Resolve(ctx context.Context, id int64, action, srcPath, destPa
 		} else {
 			// Normal path: rename dest aside with a conflict suffix so the
 			// destination version is preserved, then copy source into dest.
-			ts := time.Now().UTC().Format("20060102T150405")
-			cp := destPath + ".conflict." + ts
-			if err := os.Rename(destPath, cp); err != nil {
-				return fmt.Errorf("keep-both rename: %w", err)
-			}
-			if err := copyFile(srcPath, destPath); err != nil {
-				return fmt.Errorf("keep-both copy: %w", err)
+			// Skip if dest doesn't exist — nothing to preserve.
+			if _, statErr := os.Stat(destPath); statErr == nil {
+				ts := time.Now().UTC().Format("20060102T150405")
+				cp := destPath + ".conflict." + ts
+				if err := os.Rename(destPath, cp); err != nil {
+					return fmt.Errorf("keep-both rename: %w", err)
+				}
+				if _, statErr := os.Stat(srcPath); statErr == nil {
+					if err := copyFile(srcPath, destPath); err != nil {
+						return fmt.Errorf("keep-both copy: %w", err)
+					}
+				}
 			}
 		}
 
@@ -212,20 +224,6 @@ func AutoResolve(strategy string, srcPath, destPath string, src, dest FileState)
 	default:
 		return "", "", fmt.Errorf("unknown conflict strategy %q", strategy)
 	}
-}
-
-// hashFile computes the SHA-256 of the file at path.
-func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // copyFile copies src to dst, creating intermediate directories as needed.

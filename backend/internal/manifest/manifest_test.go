@@ -55,7 +55,8 @@ func TestStore_PutAndGet(t *testing.T) {
 	entry := &manifest.Entry{
 		JobID:       jobID,
 		RelPath:     "subdir/file.txt",
-		SHA256:      "abc123",
+		ContentHash: "abc123",
+		HashAlgo:    "sha256",
 		SizeBytes:   1024,
 		ModTime:     now,
 		Permissions: fs.FileMode(0644),
@@ -71,8 +72,11 @@ func TestStore_PutAndGet(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 
-	if got.SHA256 != entry.SHA256 {
-		t.Errorf("SHA256: got %q, want %q", got.SHA256, entry.SHA256)
+	if got.ContentHash != entry.ContentHash {
+		t.Errorf("ContentHash: got %q, want %q", got.ContentHash, entry.ContentHash)
+	}
+	if got.HashAlgo != entry.HashAlgo {
+		t.Errorf("HashAlgo: got %q, want %q", got.HashAlgo, entry.HashAlgo)
 	}
 	if got.SizeBytes != entry.SizeBytes {
 		t.Errorf("SizeBytes: got %d, want %d", got.SizeBytes, entry.SizeBytes)
@@ -88,16 +92,17 @@ func TestStore_Put_Upsert(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	e := &manifest.Entry{
-		JobID:    jobID,
-		RelPath:  "file.txt",
-		SHA256:   "first-hash",
-		SyncedAt: now,
+		JobID:       jobID,
+		RelPath:     "file.txt",
+		ContentHash: "first-hash",
+		HashAlgo:    "sha256",
+		SyncedAt:    now,
 	}
 	if err := store.Put(ctx, e); err != nil {
 		t.Fatalf("first put: %v", err)
 	}
 
-	e.SHA256 = "second-hash"
+	e.ContentHash = "second-hash"
 	if err := store.Put(ctx, e); err != nil {
 		t.Fatalf("second put: %v", err)
 	}
@@ -106,8 +111,8 @@ func TestStore_Put_Upsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.SHA256 != "second-hash" {
-		t.Errorf("SHA256: got %q, want %q", got.SHA256, "second-hash")
+	if got.ContentHash != "second-hash" {
+		t.Errorf("ContentHash: got %q, want %q", got.ContentHash, "second-hash")
 	}
 }
 
@@ -118,7 +123,7 @@ func TestStore_List(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	paths := []string{"a.txt", "b.txt", "c.txt"}
 	for _, p := range paths {
-		if err := store.Put(ctx, &manifest.Entry{JobID: jobID, RelPath: p, SHA256: p, SyncedAt: now}); err != nil {
+		if err := store.Put(ctx, &manifest.Entry{JobID: jobID, RelPath: p, ContentHash: p, HashAlgo: "sha256", SyncedAt: now}); err != nil {
 			t.Fatalf("put %q: %v", p, err)
 		}
 	}

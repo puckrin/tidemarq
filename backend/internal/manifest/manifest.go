@@ -17,7 +17,8 @@ var ErrNotFound = errors.New("manifest: entry not found")
 type Entry struct {
 	JobID       int64
 	RelPath     string
-	SHA256      string
+	ContentHash string
+	HashAlgo    string
 	SizeBytes   int64
 	ModTime     time.Time
 	Permissions fs.FileMode
@@ -47,7 +48,8 @@ func (s *Store) Get(ctx context.Context, jobID int64, relPath string) (*Entry, e
 	return &Entry{
 		JobID:       e.JobID,
 		RelPath:     e.RelPath,
-		SHA256:      e.SHA256,
+		ContentHash: e.ContentHash,
+		HashAlgo:    e.HashAlgo,
 		SizeBytes:   e.SizeBytes,
 		ModTime:     e.ModTime,
 		Permissions: e.Permissions,
@@ -60,7 +62,8 @@ func (s *Store) Put(ctx context.Context, e *Entry) error {
 	return s.db.UpsertManifestEntry(ctx, &db.ManifestEntry{
 		JobID:       e.JobID,
 		RelPath:     e.RelPath,
-		SHA256:      e.SHA256,
+		ContentHash: e.ContentHash,
+		HashAlgo:    e.HashAlgo,
 		SizeBytes:   e.SizeBytes,
 		ModTime:     e.ModTime,
 		Permissions: e.Permissions,
@@ -84,7 +87,8 @@ func (s *Store) List(ctx context.Context, jobID int64) ([]*Entry, error) {
 		entries[i] = &Entry{
 			JobID:       e.JobID,
 			RelPath:     e.RelPath,
-			SHA256:      e.SHA256,
+			ContentHash: e.ContentHash,
+			HashAlgo:    e.HashAlgo,
 			SizeBytes:   e.SizeBytes,
 			ModTime:     e.ModTime,
 			Permissions: e.Permissions,

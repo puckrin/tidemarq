@@ -13,7 +13,8 @@ type QuarantineEntry struct {
 	JobID          int64      `json:"job_id"`
 	RelPath        string     `json:"rel_path"`
 	QuarantinePath string     `json:"quarantine_path"`
-	SHA256         string     `json:"sha256"`
+	ContentHash    string     `json:"content_hash"`
+	HashAlgo       string     `json:"hash_algo"`
 	SizeBytes      int64      `json:"size_bytes"`
 	DeletedAt      time.Time  `json:"deleted_at"`
 	ExpiresAt      time.Time  `json:"expires_at"`
@@ -27,9 +28,9 @@ type QuarantineEntry struct {
 func (db *DB) CreateQuarantineEntry(ctx context.Context, e *QuarantineEntry) (*QuarantineEntry, error) {
 	res, err := db.ExecContext(ctx,
 		`INSERT INTO quarantine_entries
-		     (job_id, rel_path, quarantine_path, sha256, size_bytes, deleted_at, expires_at, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
-		e.JobID, e.RelPath, e.QuarantinePath, e.SHA256, e.SizeBytes, e.DeletedAt, e.ExpiresAt,
+		     (job_id, rel_path, quarantine_path, sha256, hash_algo, size_bytes, deleted_at, expires_at, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+		e.JobID, e.RelPath, e.QuarantinePath, e.ContentHash, e.HashAlgo, e.SizeBytes, e.DeletedAt, e.ExpiresAt,
 	)
 	if err != nil {
 		return nil, err
@@ -44,13 +45,13 @@ func (db *DB) CreateQuarantineEntry(ctx context.Context, e *QuarantineEntry) (*Q
 // GetQuarantineEntry retrieves a quarantine entry by ID.
 func (db *DB) GetQuarantineEntry(ctx context.Context, id int64) (*QuarantineEntry, error) {
 	row := db.QueryRowContext(ctx,
-		`SELECT id, job_id, rel_path, quarantine_path, sha256, size_bytes, deleted_at, expires_at,
+		`SELECT id, job_id, rel_path, quarantine_path, sha256, hash_algo, size_bytes, deleted_at, expires_at,
 		        status, removed_at
 		 FROM quarantine_entries WHERE id = ?`, id,
 	)
 	e := &QuarantineEntry{}
 	err := row.Scan(&e.ID, &e.JobID, &e.RelPath, &e.QuarantinePath,
-		&e.SHA256, &e.SizeBytes, &e.DeletedAt, &e.ExpiresAt,
+		&e.ContentHash, &e.HashAlgo, &e.SizeBytes, &e.DeletedAt, &e.ExpiresAt,
 		&e.Status, &e.RemovedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -65,13 +66,13 @@ func (db *DB) ListQuarantineEntries(ctx context.Context, jobID int64) ([]*Quaran
 	var err error
 	if jobID != 0 {
 		rows, err = db.QueryContext(ctx,
-			`SELECT id, job_id, rel_path, quarantine_path, sha256, size_bytes, deleted_at, expires_at,
+			`SELECT id, job_id, rel_path, quarantine_path, sha256, hash_algo, size_bytes, deleted_at, expires_at,
 			        status, removed_at
 			 FROM quarantine_entries WHERE status = 'active' AND job_id = ? ORDER BY deleted_at DESC`, jobID,
 		)
 	} else {
 		rows, err = db.QueryContext(ctx,
-			`SELECT id, job_id, rel_path, quarantine_path, sha256, size_bytes, deleted_at, expires_at,
+			`SELECT id, job_id, rel_path, quarantine_path, sha256, hash_algo, size_bytes, deleted_at, expires_at,
 			        status, removed_at
 			 FROM quarantine_entries WHERE status = 'active' ORDER BY deleted_at DESC`,
 		)
@@ -90,13 +91,13 @@ func (db *DB) ListRemovedQuarantineEntries(ctx context.Context, jobID int64) ([]
 	var err error
 	if jobID != 0 {
 		rows, err = db.QueryContext(ctx,
-			`SELECT id, job_id, rel_path, quarantine_path, sha256, size_bytes, deleted_at, expires_at,
+			`SELECT id, job_id, rel_path, quarantine_path, sha256, hash_algo, size_bytes, deleted_at, expires_at,
 			        status, removed_at
 			 FROM quarantine_entries WHERE status != 'active' AND job_id = ? ORDER BY removed_at DESC`, jobID,
 		)
 	} else {
 		rows, err = db.QueryContext(ctx,
-			`SELECT id, job_id, rel_path, quarantine_path, sha256, size_bytes, deleted_at, expires_at,
+			`SELECT id, job_id, rel_path, quarantine_path, sha256, hash_algo, size_bytes, deleted_at, expires_at,
 			        status, removed_at
 			 FROM quarantine_entries WHERE status != 'active' ORDER BY removed_at DESC`,
 		)
@@ -144,7 +145,7 @@ func scanQuarantineRows(rows *sql.Rows) ([]*QuarantineEntry, error) {
 	for rows.Next() {
 		e := &QuarantineEntry{}
 		if err := rows.Scan(&e.ID, &e.JobID, &e.RelPath, &e.QuarantinePath,
-			&e.SHA256, &e.SizeBytes, &e.DeletedAt, &e.ExpiresAt,
+			&e.ContentHash, &e.HashAlgo, &e.SizeBytes, &e.DeletedAt, &e.ExpiresAt,
 			&e.Status, &e.RemovedAt); err != nil {
 			return nil, err
 		}

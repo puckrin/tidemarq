@@ -87,7 +87,7 @@ export function ConflictCard({ conflicts, onChanged }: Props) {
               <div className="diff-body">
                 <div className="diff-row"><strong>Size</strong>: {fmtBytes(selected.src_size)}</div>
                 <div className="diff-row"><strong>Modified</strong>: {fmtDate(selected.src_mod_time)}</div>
-                <div className="diff-row"><strong>SHA256</strong>: <span className="mono" style={{ fontSize: 10 }}>{selected.src_sha256.slice(0, 16)}…</span></div>
+                <div className="diff-row"><strong>Hash</strong>: <span className="mono" style={{ fontSize: 10 }}>{selected.src_content_hash.slice(0, 16)}…</span></div>
               </div>
             </div>
             <div className="diff-side">
@@ -95,7 +95,7 @@ export function ConflictCard({ conflicts, onChanged }: Props) {
               <div className="diff-body">
                 <div className="diff-row"><strong>Size</strong>: {fmtBytes(selected.dest_size)}</div>
                 <div className="diff-row"><strong>Modified</strong>: {fmtDate(selected.dest_mod_time)}</div>
-                <div className="diff-row"><strong>SHA256</strong>: <span className="mono" style={{ fontSize: 10 }}>{selected.dest_sha256.slice(0, 16)}…</span></div>
+                <div className="diff-row"><strong>Hash</strong>: <span className="mono" style={{ fontSize: 10 }}>{selected.dest_content_hash.slice(0, 16)}…</span></div>
               </div>
             </div>
           </div>

@@ -21,6 +21,9 @@ type jobRequest struct {
 	CronSchedule     string `json:"cron_schedule"`
 	WatchEnabled     bool   `json:"watch_enabled"`
 	FullChecksum     bool   `json:"full_checksum"`
+	// HashAlgo selects the file integrity hash algorithm: "sha256" or "blake3".
+	// Omit or set to "" to accept the server default (currently "blake3").
+	HashAlgo         string `json:"hash_algo,omitempty"`
 }
 
 func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +57,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		CronSchedule:     req.CronSchedule,
 		WatchEnabled:     req.WatchEnabled,
 		FullChecksum:     req.FullChecksum,
+		HashAlgo:         req.HashAlgo,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error(), "bad_request")
@@ -108,6 +112,7 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		CronSchedule:     req.CronSchedule,
 		WatchEnabled:     req.WatchEnabled,
 		FullChecksum:     req.FullChecksum,
+		HashAlgo:         req.HashAlgo,
 	})
 	if err != nil {
 		if errors.Is(err, jobs.ErrNotFound) {

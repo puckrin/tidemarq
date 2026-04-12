@@ -43,8 +43,8 @@ func seedJob(t *testing.T, d *db.DB) int64 {
 // TestDetect_NoConflict verifies that if only one side changed, Detect returns false.
 func TestDetect_NoConflict(t *testing.T) {
 	syncedHash := "aaaa"
-	src := conflicts.FileState{Exists: true, SHA256: "bbbb"} // src changed
-	dest := conflicts.FileState{Exists: true, SHA256: "aaaa"} // dest unchanged
+	src := conflicts.FileState{Exists: true, ContentHash: "bbbb"} // src changed
+	dest := conflicts.FileState{Exists: true, ContentHash: "aaaa"} // dest unchanged
 
 	isConflict, srcChanged, destChanged := conflicts.Detect(syncedHash, src, dest)
 	if isConflict {
@@ -61,8 +61,8 @@ func TestDetect_NoConflict(t *testing.T) {
 // TestDetect_Conflict verifies that both-sides-changed is detected.
 func TestDetect_Conflict(t *testing.T) {
 	syncedHash := "aaaa"
-	src := conflicts.FileState{Exists: true, SHA256: "bbbb"}
-	dest := conflicts.FileState{Exists: true, SHA256: "cccc"}
+	src := conflicts.FileState{Exists: true, ContentHash: "bbbb"}
+	dest := conflicts.FileState{Exists: true, ContentHash: "cccc"}
 
 	isConflict, _, _ := conflicts.Detect(syncedHash, src, dest)
 	if !isConflict {
@@ -73,8 +73,8 @@ func TestDetect_Conflict(t *testing.T) {
 // TestDetect_NeitherChanged verifies idempotency: no conflict when nothing changed.
 func TestDetect_NeitherChanged(t *testing.T) {
 	syncedHash := "aaaa"
-	src := conflicts.FileState{Exists: true, SHA256: "aaaa"}
-	dest := conflicts.FileState{Exists: true, SHA256: "aaaa"}
+	src := conflicts.FileState{Exists: true, ContentHash: "aaaa"}
+	dest := conflicts.FileState{Exists: true, ContentHash: "aaaa"}
 
 	isConflict, srcChanged, destChanged := conflicts.Detect(syncedHash, src, dest)
 	if isConflict || srcChanged || destChanged {
@@ -88,8 +88,8 @@ func TestRecord_AndGet(t *testing.T) {
 	jobID := seedJob(t, d)
 	svc := conflicts.New(d)
 
-	src := conflicts.FileState{Exists: true, SHA256: "src-hash", Size: 100, ModTime: time.Now()}
-	dest := conflicts.FileState{Exists: true, SHA256: "dest-hash", Size: 200, ModTime: time.Now()}
+	src := conflicts.FileState{Exists: true, ContentHash: "src-hash", Size: 100, ModTime: time.Now()}
+	dest := conflicts.FileState{Exists: true, ContentHash: "dest-hash", Size: 200, ModTime: time.Now()}
 
 	c, err := svc.Record(context.Background(), jobID, "dir/file.txt", "ask-user", "", src, dest)
 	if err != nil {
@@ -117,8 +117,8 @@ func TestList_FiltersByJob(t *testing.T) {
 	jobID := seedJob(t, d)
 	svc := conflicts.New(d)
 
-	src := conflicts.FileState{Exists: true, SHA256: "s", ModTime: time.Now()}
-	dest := conflicts.FileState{Exists: true, SHA256: "d", ModTime: time.Now()}
+	src := conflicts.FileState{Exists: true, ContentHash: "s", ModTime: time.Now()}
+	dest := conflicts.FileState{Exists: true, ContentHash: "d", ModTime: time.Now()}
 
 	_, _ = svc.Record(context.Background(), jobID, "a.txt", "ask-user", "", src, dest)
 	_, _ = svc.Record(context.Background(), jobID, "b.txt", "ask-user", "", src, dest)
@@ -142,8 +142,8 @@ func TestList_FiltersByJob(t *testing.T) {
 
 // TestAutoResolve_SourceWins verifies source-wins copies source path.
 func TestAutoResolve_SourceWins(t *testing.T) {
-	src := conflicts.FileState{SHA256: "src", Size: 50, ModTime: time.Now()}
-	dest := conflicts.FileState{SHA256: "dest", Size: 100, ModTime: time.Now()}
+	src := conflicts.FileState{ContentHash: "src", Size: 50, ModTime: time.Now()}
+	dest := conflicts.FileState{ContentHash: "dest", Size: 100, ModTime: time.Now()}
 
 	winner, _, err := conflicts.AutoResolve("source-wins", "/src/file", "/dest/file", src, dest)
 	if err != nil {
@@ -156,8 +156,8 @@ func TestAutoResolve_SourceWins(t *testing.T) {
 
 // TestAutoResolve_DestinationWins verifies destination-wins keeps dest.
 func TestAutoResolve_DestinationWins(t *testing.T) {
-	src := conflicts.FileState{SHA256: "src", ModTime: time.Now()}
-	dest := conflicts.FileState{SHA256: "dest", ModTime: time.Now()}
+	src := conflicts.FileState{ContentHash: "src", ModTime: time.Now()}
+	dest := conflicts.FileState{ContentHash: "dest", ModTime: time.Now()}
 
 	winner, _, err := conflicts.AutoResolve("destination-wins", "/src/file", "/dest/file", src, dest)
 	if err != nil {
@@ -173,8 +173,8 @@ func TestAutoResolve_NewestWins(t *testing.T) {
 	older := time.Now().Add(-time.Hour)
 	newer := time.Now()
 
-	src := conflicts.FileState{SHA256: "src", ModTime: newer}
-	dest := conflicts.FileState{SHA256: "dest", ModTime: older}
+	src := conflicts.FileState{ContentHash: "src", ModTime: newer}
+	dest := conflicts.FileState{ContentHash: "dest", ModTime: older}
 
 	winner, _, err := conflicts.AutoResolve("newest-wins", "/src/file", "/dest/file", src, dest)
 	if err != nil {
@@ -187,8 +187,8 @@ func TestAutoResolve_NewestWins(t *testing.T) {
 
 // TestAutoResolve_LargestWins verifies larger file wins.
 func TestAutoResolve_LargestWins(t *testing.T) {
-	src := conflicts.FileState{SHA256: "src", Size: 100, ModTime: time.Now()}
-	dest := conflicts.FileState{SHA256: "dest", Size: 200, ModTime: time.Now()}
+	src := conflicts.FileState{ContentHash: "src", Size: 100, ModTime: time.Now()}
+	dest := conflicts.FileState{ContentHash: "dest", Size: 200, ModTime: time.Now()}
 
 	winner, _, err := conflicts.AutoResolve("largest-wins", "/src/file", "/dest/file", src, dest)
 	if err != nil {
@@ -213,8 +213,8 @@ func TestAutoResolve_AskUser_LeavesDestUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	src := conflicts.FileState{SHA256: "src", ModTime: time.Now()}
-	dest := conflicts.FileState{SHA256: "dest", ModTime: time.Now()}
+	src := conflicts.FileState{ContentHash: "src", ModTime: time.Now()}
+	dest := conflicts.FileState{ContentHash: "dest", ModTime: time.Now()}
 
 	winner, conflictPath, err := conflicts.AutoResolve("ask-user", srcPath, destPath, src, dest)
 	if err != nil {
@@ -264,8 +264,8 @@ func TestResolve_KeepSource_CopiesSourceToDest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srcState := conflicts.FileState{Exists: true, SHA256: "s", ModTime: time.Now()}
-	destState := conflicts.FileState{Exists: true, SHA256: "d", ModTime: time.Now()}
+	srcState := conflicts.FileState{Exists: true, ContentHash: "s", ModTime: time.Now()}
+	destState := conflicts.FileState{Exists: true, ContentHash: "d", ModTime: time.Now()}
 
 	// AutoResolve ask-user leaves both files untouched; engine records conflict.
 	_, conflictPath, err := conflicts.AutoResolve("ask-user", srcPath, destPath, srcState, destState)
@@ -318,8 +318,8 @@ func TestResolve_KeepDest_CopiesDestToSource(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srcState := conflicts.FileState{Exists: true, SHA256: "s", ModTime: time.Now()}
-	destState := conflicts.FileState{Exists: true, SHA256: "d", ModTime: time.Now()}
+	srcState := conflicts.FileState{Exists: true, ContentHash: "s", ModTime: time.Now()}
+	destState := conflicts.FileState{Exists: true, ContentHash: "d", ModTime: time.Now()}
 
 	_, conflictPath, err := conflicts.AutoResolve("ask-user", srcPath, destPath, srcState, destState)
 	if err != nil {
@@ -369,8 +369,8 @@ func TestResolve_KeepBoth_CreatesConflictFileAtResolutionTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srcState := conflicts.FileState{Exists: true, SHA256: "s", ModTime: time.Now()}
-	destState := conflicts.FileState{Exists: true, SHA256: "d", ModTime: time.Now()}
+	srcState := conflicts.FileState{Exists: true, ContentHash: "s", ModTime: time.Now()}
+	destState := conflicts.FileState{Exists: true, ContentHash: "d", ModTime: time.Now()}
 
 	_, conflictPath, err := conflicts.AutoResolve("ask-user", srcPath, destPath, srcState, destState)
 	if err != nil {

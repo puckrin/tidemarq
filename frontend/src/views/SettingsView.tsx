@@ -234,6 +234,16 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
               </div>
               <input className="fi" style={{ maxWidth: 100 }} defaultValue="14" type="number" min={1}/>
             </div>
+            <div className="srow">
+              <div>
+                <div className="srow-name">Default hash algorithm</div>
+                <div className="srow-desc">File integrity algorithm used for new jobs</div>
+              </div>
+              <select className="fs" style={{ maxWidth: 280 }}>
+                <option value="blake3">BLAKE3 (recommended — faster)</option>
+                <option value="sha256">SHA-256 (legacy compatibility)</option>
+              </select>
+            </div>
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <Button variant="primary" onClick={() => toast('Settings saved.', 'ok')}>Save changes</Button>

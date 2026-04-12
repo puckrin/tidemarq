@@ -26,6 +26,7 @@ interface FormState {
   cron_schedule: string
   bandwidth_limit_kb: number
   full_checksum: boolean
+  hash_algo: 'sha256' | 'blake3'
 }
 
 const INIT: FormState = {
@@ -38,6 +39,7 @@ const INIT: FormState = {
   cron_schedule: '',
   bandwidth_limit_kb: 0,
   full_checksum: false,
+  hash_algo: 'blake3',
 }
 
 function jobToForm(j: Job): FormState {
@@ -51,6 +53,7 @@ function jobToForm(j: Job): FormState {
     cron_schedule:      j.cron_schedule ?? '',
     bandwidth_limit_kb: j.bandwidth_limit_kb,
     full_checksum:      j.full_checksum,
+    hash_algo:          (j.hash_algo ?? 'blake3') as 'sha256' | 'blake3',
   }
 }
 
@@ -138,6 +141,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
         cron_schedule:      form.cron_schedule,
         bandwidth_limit_kb: form.bandwidth_limit_kb,
         full_checksum:      form.full_checksum,
+        hash_algo:          form.hash_algo,
       }
       return isEdit ? updateJob(editJobId!, payload) : createJob(payload)
     },
@@ -356,6 +360,22 @@ export function NewJobView({ onNav, editJobId }: Props) {
                   onChange={e => set({ bandwidth_limit_kb: Number(e.target.value) })}
                 />
               </div>
+              <div className="fg" style={{ marginBottom: 0 }}>
+                <label className="fl">Hash algorithm</label>
+                <select
+                  className="fs"
+                  style={{ maxWidth: 260 }}
+                  value={form.hash_algo}
+                  onChange={e => set({ hash_algo: e.target.value as 'sha256' | 'blake3' })}
+                >
+                  <option value="blake3">BLAKE3 (recommended — faster)</option>
+                  <option value="sha256">SHA-256 (legacy compatibility)</option>
+                </select>
+                <div className="fhint">
+                  Algorithm used to verify file integrity after each transfer and detect changes between runs.
+                  BLAKE3 is significantly faster than SHA-256 with equivalent security.
+                </div>
+              </div>
               <div className="flex gap12" style={{ alignItems: 'flex-start' }}>
                 <label className="toggle" style={{ marginTop: 3 }}>
                   <input
@@ -366,7 +386,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
                   <span className="tog-sl"/>
                 </label>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>Full SHA-256 verification</div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>Full content verification on every run</div>
                   <div className="fs12 text2" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <span>
                       By default, repeat runs are fast: unchanged files are detected by comparing size
@@ -410,7 +430,8 @@ export function NewJobView({ onNav, editJobId }: Props) {
                 ['FS watch',         effectiveWatch ? 'Enabled' : watchDisabled ? 'Disabled (network mount)' : 'Disabled'],
                 ['Cron schedule',    form.cron_schedule || 'None'],
                 ['Bandwidth limit',  form.bandwidth_limit_kb > 0 ? `${form.bandwidth_limit_kb} KB/s` : 'Unlimited'],
-                ['Full SHA-256',     form.full_checksum ? 'Yes (slower, reads every file)' : 'No (metadata fast-path)'],
+                ['Hash algorithm',   form.hash_algo === 'blake3' ? 'BLAKE3' : 'SHA-256'],
+                ['Full verification', form.full_checksum ? 'Yes (slower, reads every file)' : 'No (metadata fast-path)'],
               ] as [string, React.ReactNode][]).map(([label, val]) => (
                 <div key={label} className="flex gap8">
                   <span className="text3 fw5" style={{ minWidth: 160 }}>{label}</span>

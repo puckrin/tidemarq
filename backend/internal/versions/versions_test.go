@@ -47,7 +47,7 @@ func TestSnapshot_CreatesVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v, err := svc.Snapshot(context.Background(), jobID, "file.txt", destPath)
+	v, err := svc.Snapshot(context.Background(), jobID, "file.txt", destPath, "sha256")
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -57,8 +57,8 @@ func TestSnapshot_CreatesVersion(t *testing.T) {
 	if v.VersionNum != 1 {
 		t.Errorf("expected version_num=1, got %d", v.VersionNum)
 	}
-	if v.SHA256 == "" {
-		t.Error("expected SHA256 to be set")
+	if v.ContentHash == "" {
+		t.Error("expected ContentHash to be set")
 	}
 
 	// Stored file should exist and have the right content.
@@ -82,7 +82,7 @@ func TestSnapshot_VersionNumbers_Increment(t *testing.T) {
 		if err := os.WriteFile(destPath, []byte("content v"+string(rune('0'+i))), 0644); err != nil {
 			t.Fatal(err)
 		}
-		v, err := svc.Snapshot(context.Background(), jobID, "file.txt", destPath)
+		v, err := svc.Snapshot(context.Background(), jobID, "file.txt", destPath, "sha256")
 		if err != nil {
 			t.Fatalf("Snapshot %d: %v", i, err)
 		}
@@ -96,7 +96,7 @@ func TestSnapshot_VersionNumbers_Increment(t *testing.T) {
 func TestSnapshot_NonExistentFile(t *testing.T) {
 	svc, _, jobID := newTestService(t)
 
-	v, err := svc.Snapshot(context.Background(), jobID, "missing.txt", "/nonexistent/path/file.txt")
+	v, err := svc.Snapshot(context.Background(), jobID, "missing.txt", "/nonexistent/path/file.txt", "sha256")
 	if err != nil {
 		t.Fatalf("expected no error for missing file, got: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestRestoreVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v, err := svc.Snapshot(context.Background(), jobID, "file.txt", destPath)
+	v, err := svc.Snapshot(context.Background(), jobID, "file.txt", destPath, "sha256")
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestQuarantine_MovesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e, err := svc.Quarantine(context.Background(), jobID, "file.txt", destPath, destDir)
+	e, err := svc.Quarantine(context.Background(), jobID, "file.txt", destPath, destDir, "sha256")
 	if err != nil {
 		t.Fatalf("Quarantine: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestRestoreQuarantine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e, err := svc.Quarantine(context.Background(), jobID, "file.txt", destPath, destDir)
+	e, err := svc.Quarantine(context.Background(), jobID, "file.txt", destPath, destDir, "sha256")
 	if err != nil {
 		t.Fatalf("Quarantine: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestQuarantine_PrunesEmptyDestDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := svc.Quarantine(context.Background(), jobID, "a/b/c/file.txt", destPath, destDir); err != nil {
+	if _, err := svc.Quarantine(context.Background(), jobID, "a/b/c/file.txt", destPath, destDir, "sha256"); err != nil {
 		t.Fatalf("Quarantine: %v", err)
 	}
 
@@ -252,7 +252,7 @@ func TestQuarantine_PrunesPartialDirs(t *testing.T) {
 	}
 
 	// Quarantine only one file.
-	if _, err := svc.Quarantine(context.Background(), jobID, "docs/a.txt", fileA, destDir); err != nil {
+	if _, err := svc.Quarantine(context.Background(), jobID, "docs/a.txt", fileA, destDir, "sha256"); err != nil {
 		t.Fatalf("Quarantine a.txt: %v", err)
 	}
 
@@ -262,7 +262,7 @@ func TestQuarantine_PrunesPartialDirs(t *testing.T) {
 	}
 
 	// Quarantine the second file.
-	if _, err := svc.Quarantine(context.Background(), jobID, "docs/b.txt", fileB, destDir); err != nil {
+	if _, err := svc.Quarantine(context.Background(), jobID, "docs/b.txt", fileB, destDir, "sha256"); err != nil {
 		t.Fatalf("Quarantine b.txt: %v", err)
 	}
 
@@ -287,7 +287,7 @@ func TestRestoreQuarantine_PrunesQuarantineDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e, err := svc.Quarantine(context.Background(), jobID, "sub/file.txt", destPath, destDir)
+	e, err := svc.Quarantine(context.Background(), jobID, "sub/file.txt", destPath, destDir, "sha256")
 	if err != nil {
 		t.Fatalf("Quarantine: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestDeleteQuarantine_PrunesQuarantineDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e, err := svc.Quarantine(context.Background(), jobID, "file.txt", destPath, destDir)
+	e, err := svc.Quarantine(context.Background(), jobID, "file.txt", destPath, destDir, "sha256")
 	if err != nil {
 		t.Fatalf("Quarantine: %v", err)
 	}
@@ -358,11 +358,11 @@ func TestRestoreQuarantine_QuarantineDirRetained_WhenSiblingExists(t *testing.T)
 		t.Fatal(err)
 	}
 
-	eA, err := svc.Quarantine(context.Background(), jobID, "a.txt", pathA, destDir)
+	eA, err := svc.Quarantine(context.Background(), jobID, "a.txt", pathA, destDir, "sha256")
 	if err != nil {
 		t.Fatalf("Quarantine a: %v", err)
 	}
-	eB, err := svc.Quarantine(context.Background(), jobID, "b.txt", pathB, destDir)
+	eB, err := svc.Quarantine(context.Background(), jobID, "b.txt", pathB, destDir, "sha256")
 	if err != nil {
 		t.Fatalf("Quarantine b: %v", err)
 	}
@@ -401,11 +401,11 @@ func TestDeleteQuarantine_QuarantineDirRetained_WhenSiblingExists(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	eA, err := svc.Quarantine(context.Background(), jobID, "a.txt", pathA, destDir)
+	eA, err := svc.Quarantine(context.Background(), jobID, "a.txt", pathA, destDir, "sha256")
 	if err != nil {
 		t.Fatalf("Quarantine a: %v", err)
 	}
-	eB, err := svc.Quarantine(context.Background(), jobID, "b.txt", pathB, destDir)
+	eB, err := svc.Quarantine(context.Background(), jobID, "b.txt", pathB, destDir, "sha256")
 	if err != nil {
 		t.Fatalf("Quarantine b: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestListVersions(t *testing.T) {
 	path := filepath.Join(dir, "file.txt")
 	for i := 0; i < 3; i++ {
 		_ = os.WriteFile(path, []byte("v"), 0644)
-		_, _ = svc.Snapshot(context.Background(), jobID, "file.txt", path)
+		_, _ = svc.Snapshot(context.Background(), jobID, "file.txt", path, "sha256")
 	}
 
 	list, err := svc.ListVersions(context.Background(), jobID, "file.txt")

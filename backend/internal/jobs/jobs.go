@@ -16,6 +16,7 @@ import (
 	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/db"
 	"github.com/tidemarq/tidemarq/internal/engine"
+	"github.com/tidemarq/tidemarq/internal/hasher"
 	"github.com/tidemarq/tidemarq/internal/mountfs"
 	"github.com/tidemarq/tidemarq/internal/mounts"
 	"github.com/tidemarq/tidemarq/internal/versions"
@@ -43,6 +44,9 @@ type CreateParams struct {
 	CronSchedule     string
 	WatchEnabled     bool
 	FullChecksum     bool
+	// HashAlgo selects the file integrity hash algorithm: "sha256" or "blake3".
+	// Defaults to hasher.Default ("blake3") when empty.
+	HashAlgo string
 }
 
 // UpdateParams holds the fields that may be updated on a job.
@@ -58,6 +62,8 @@ type UpdateParams struct {
 	CronSchedule     string
 	WatchEnabled     bool
 	FullChecksum     bool
+	// HashAlgo selects the file integrity hash algorithm: "sha256" or "blake3".
+	HashAlgo string
 }
 
 // runContext tracks an in-progress job run.
@@ -153,6 +159,12 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*db.Job, error) {
 			return nil, fmt.Errorf("invalid cron_schedule: %w", err)
 		}
 	}
+	if p.HashAlgo == "" {
+		p.HashAlgo = hasher.Default
+	}
+	if _, err := hasher.New(p.HashAlgo); err != nil {
+		return nil, fmt.Errorf("invalid hash_algo %q: must be \"sha256\" or \"blake3\"", p.HashAlgo)
+	}
 	j, err := s.db.CreateJob(ctx, db.CreateJobParams{
 		Name:             p.Name,
 		SourcePath:       p.SourcePath,
@@ -165,6 +177,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*db.Job, error) {
 		CronSchedule:     p.CronSchedule,
 		WatchEnabled:     p.WatchEnabled,
 		FullChecksum:     p.FullChecksum,
+		HashAlgo:         p.HashAlgo,
 	})
 	if err != nil {
 		return nil, err
@@ -211,6 +224,12 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (*db.Job
 			return nil, fmt.Errorf("invalid cron_schedule: %w", err)
 		}
 	}
+	if p.HashAlgo == "" {
+		p.HashAlgo = hasher.Default
+	}
+	if _, err := hasher.New(p.HashAlgo); err != nil {
+		return nil, fmt.Errorf("invalid hash_algo %q: must be \"sha256\" or \"blake3\"", p.HashAlgo)
+	}
 
 	j, err := s.db.UpdateJob(ctx, id, db.UpdateJobParams{
 		Name:             p.Name,
@@ -224,6 +243,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (*db.Job
 		CronSchedule:     p.CronSchedule,
 		WatchEnabled:     p.WatchEnabled,
 		FullChecksum:     p.FullChecksum,
+		HashAlgo:         p.HashAlgo,
 	})
 	if errors.Is(err, db.ErrNotFound) {
 		return nil, ErrNotFound
@@ -364,6 +384,7 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		DestFS:           dstFS,
 		BandwidthLimitKB: job.BandwidthLimitKB,
 		FullChecksum:     job.FullChecksum,
+		HashAlgo:         job.HashAlgo,
 		PauseCh:          pauseCh,
 		VersionsSvc:      s.versionsSvc,
 		ConflictsSvc:     s.conflictsSvc,
