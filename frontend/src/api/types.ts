@@ -13,6 +13,9 @@ export interface Job {
   watch_enabled: boolean
   full_checksum: boolean
   hash_algo: 'sha256' | 'blake3'
+  use_delta: boolean
+  delta_block_size: number
+  delta_min_bytes: number
   last_run_at: string | null
   last_error: string | null
   created_at: string

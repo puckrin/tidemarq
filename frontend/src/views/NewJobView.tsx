@@ -27,6 +27,7 @@ interface FormState {
   bandwidth_limit_kb: number
   full_checksum: boolean
   hash_algo: 'sha256' | 'blake3'
+  use_delta: boolean
 }
 
 const INIT: FormState = {
@@ -40,6 +41,7 @@ const INIT: FormState = {
   bandwidth_limit_kb: 0,
   full_checksum: false,
   hash_algo: 'blake3',
+  use_delta: false,
 }
 
 function jobToForm(j: Job): FormState {
@@ -54,6 +56,7 @@ function jobToForm(j: Job): FormState {
     bandwidth_limit_kb: j.bandwidth_limit_kb,
     full_checksum:      j.full_checksum,
     hash_algo:          (j.hash_algo ?? 'blake3') as 'sha256' | 'blake3',
+    use_delta:          j.use_delta ?? false,
   }
 }
 
@@ -142,6 +145,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
         bandwidth_limit_kb: form.bandwidth_limit_kb,
         full_checksum:      form.full_checksum,
         hash_algo:          form.hash_algo,
+        use_delta:          form.use_delta,
       }
       return isEdit ? updateJob(editJobId!, payload) : createJob(payload)
     },
@@ -403,6 +407,23 @@ export function NewJobView({ onNav, editJobId }: Props) {
                   </div>
                 </div>
               </div>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 0 0' }}>
+              <label className="tog">
+                <input
+                  type="checkbox"
+                  checked={form.use_delta}
+                  onChange={e => set({ use_delta: e.target.checked })}
+                />
+                <span className="tog-sl"/>
+              </label>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>Delta transfer</div>
+                <div className="fs12 text2">
+                  For large files with small changes, only the modified regions are transferred.
+                  Uses a rolling checksum (Adler-32) to identify unchanged blocks.
+                  Has no effect for remote mount destinations or files smaller than 64 KB.
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -432,6 +453,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
                 ['Bandwidth limit',  form.bandwidth_limit_kb > 0 ? `${form.bandwidth_limit_kb} KB/s` : 'Unlimited'],
                 ['Hash algorithm',   form.hash_algo === 'blake3' ? 'BLAKE3' : 'SHA-256'],
                 ['Full verification', form.full_checksum ? 'Yes (slower, reads every file)' : 'No (metadata fast-path)'],
+                ['Delta transfer',   form.use_delta ? 'Enabled' : 'Disabled'],
               ] as [string, React.ReactNode][]).map(([label, val]) => (
                 <div key={label} className="flex gap8">
                   <span className="text3 fw5" style={{ minWidth: 160 }}>{label}</span>

@@ -252,6 +252,7 @@ export function JobDetailView({ jobId, onNav }: Props) {
               ['Bandwidth limit', job.bandwidth_limit_kb > 0 ? `${(job.bandwidth_limit_kb/1024).toFixed(1)} MB/s` : 'None'],
               ['Hash algorithm', job.hash_algo === 'blake3' ? 'BLAKE3' : 'SHA-256'],
               ['Verification', job.full_checksum ? 'Full content (all files)' : 'Metadata fast-path'],
+              ['Delta transfer', job.use_delta ? 'Enabled' : 'Disabled'],
             ].map(([label, val]) => (
               <div key={String(label)} className="flex gap8">
                 <span className="text3 fw5" style={{ minWidth: 130 }}>{label}</span>

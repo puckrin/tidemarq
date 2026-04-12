@@ -46,7 +46,10 @@ type CreateParams struct {
 	FullChecksum     bool
 	// HashAlgo selects the file integrity hash algorithm: "sha256" or "blake3".
 	// Defaults to hasher.Default ("blake3") when empty.
-	HashAlgo string
+	HashAlgo       string
+	UseDelta       bool
+	DeltaBlockSize int64
+	DeltaMinBytes  int64
 }
 
 // UpdateParams holds the fields that may be updated on a job.
@@ -63,7 +66,10 @@ type UpdateParams struct {
 	WatchEnabled     bool
 	FullChecksum     bool
 	// HashAlgo selects the file integrity hash algorithm: "sha256" or "blake3".
-	HashAlgo string
+	HashAlgo       string
+	UseDelta       bool
+	DeltaBlockSize int64
+	DeltaMinBytes  int64
 }
 
 // runContext tracks an in-progress job run.
@@ -178,6 +184,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*db.Job, error) {
 		WatchEnabled:     p.WatchEnabled,
 		FullChecksum:     p.FullChecksum,
 		HashAlgo:         p.HashAlgo,
+		UseDelta:         p.UseDelta,
+		DeltaBlockSize:   p.DeltaBlockSize,
+		DeltaMinBytes:    p.DeltaMinBytes,
 	})
 	if err != nil {
 		return nil, err
@@ -244,6 +253,9 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (*db.Job
 		WatchEnabled:     p.WatchEnabled,
 		FullChecksum:     p.FullChecksum,
 		HashAlgo:         p.HashAlgo,
+		UseDelta:         p.UseDelta,
+		DeltaBlockSize:   p.DeltaBlockSize,
+		DeltaMinBytes:    p.DeltaMinBytes,
 	})
 	if errors.Is(err, db.ErrNotFound) {
 		return nil, ErrNotFound
@@ -385,6 +397,9 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		BandwidthLimitKB: job.BandwidthLimitKB,
 		FullChecksum:     job.FullChecksum,
 		HashAlgo:         job.HashAlgo,
+		UseDelta:         job.UseDelta,
+		DeltaBlockSize:   int(job.DeltaBlockSize),
+		DeltaMinBytes:    job.DeltaMinBytes,
 		PauseCh:          pauseCh,
 		VersionsSvc:      s.versionsSvc,
 		ConflictsSvc:     s.conflictsSvc,

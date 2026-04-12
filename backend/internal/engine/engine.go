@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tidemarq/tidemarq/internal/conflicts"
+	"github.com/tidemarq/tidemarq/internal/delta"
 	"github.com/tidemarq/tidemarq/internal/hasher"
 	"github.com/tidemarq/tidemarq/internal/manifest"
 	"github.com/tidemarq/tidemarq/internal/mountfs"
@@ -47,6 +48,21 @@ type Config struct {
 	// entry, the file is skipped without reading its contents, and copies use a single
 	// streaming pass that computes hashes inline. Recommended for large or network sources.
 	FullChecksum     bool
+	// UseDelta enables rolling-checksum delta transfer for local filesystem paths.
+	// When true and an existing destination file is found, the engine computes an
+	// Adler-32/BLAKE3 block signature of the destination, diffs the source against it,
+	// and transfers only changed regions. Falls back to a full copy if the delta offers
+	// no benefit (>= 90 % literals) or if the destination does not yet exist.
+	// Has no effect for remote mount destinations.
+	UseDelta         bool
+	// DeltaBlockSize is the fixed block size (bytes) used for delta signature computation.
+	// 0 uses the default of 2048 bytes. Larger values reduce memory use for the signature
+	// but coarsen the change granularity.
+	DeltaBlockSize   int
+	// DeltaMinBytes is the minimum source file size (bytes) before delta transfer is
+	// attempted. Files smaller than this are always copied in full. 0 uses a default of
+	// 65536 bytes.
+	DeltaMinBytes    int64
 	OnProgress       func(Progress)   // called after each file is processed; may be nil
 	// OnFileStart is called immediately before a file begins evaluation (before any
 	// hashing or copy decision). It is rate-limited by the caller. May be nil.
@@ -697,13 +713,22 @@ func (e *Engine) transferFile(ctx context.Context, cfg Config, srcAbsPath, dstAb
 		return 0, fmt.Errorf("mkdir: %w", err)
 	}
 
-	written, paused, err := copyFile(srcAbsPath, dstAbsPath, cfg.BandwidthLimitKB, cfg.PauseCh)
-	if err != nil {
-		return 0, fmt.Errorf("copying file: %w", err)
+	// Attempt delta transfer first; fall back to full copy on miss or error.
+	written, usedDelta, deltaErr := tryDeltaTransfer(cfg, srcAbsPath, dstAbsPath)
+	if deltaErr != nil {
+		return 0, deltaErr
 	}
-	if paused {
-		os.Remove(dstAbsPath) //nolint:errcheck
-		return 0, errMidFilePause
+	if !usedDelta {
+		var paused bool
+		var copyErr error
+		written, paused, copyErr = copyFile(srcAbsPath, dstAbsPath, cfg.BandwidthLimitKB, cfg.PauseCh)
+		if copyErr != nil {
+			return 0, fmt.Errorf("copying file: %w", copyErr)
+		}
+		if paused {
+			os.Remove(dstAbsPath) //nolint:errcheck
+			return 0, errMidFilePause
+		}
 	}
 
 	algo := effectiveAlgo(cfg)
@@ -837,6 +862,55 @@ func (e *Engine) transferFileFSStreaming(ctx context.Context, cfg Config, srcFS,
 	if dstDir != "" && dstDir != "." {
 		if err := dstFS.MkdirAll(dstDir); err != nil {
 			return 0, fmt.Errorf("mkdir: %w", err)
+		}
+	}
+
+	// When both sides are local and delta is enabled, attempt a delta transfer
+	// before falling back to the streaming copy path.
+	if cfg.UseDelta {
+		if srcLocal, ok := srcFS.(*mountfs.LocalFS); ok {
+			if dstLocal, ok := dstFS.(*mountfs.LocalFS); ok {
+				srcAbsPath := filepath.Join(srcLocal.Root(), filepath.FromSlash(fi.RelPath))
+				dstAbsPath := filepath.Join(dstLocal.Root(), filepath.FromSlash(fi.RelPath))
+				written, usedDelta, deltaErr := tryDeltaTransfer(cfg, srcAbsPath, dstAbsPath)
+				if deltaErr != nil {
+					return 0, deltaErr
+				}
+				if usedDelta {
+					if cfg.OnFileCopyStart != nil {
+						cfg.OnFileCopyStart(fi.RelPath)
+					}
+					algo := effectiveAlgo(cfg)
+					srcHash, err := hasher.HashFile(algo, srcAbsPath)
+					if err != nil {
+						return 0, fmt.Errorf("hashing source after delta: %w", err)
+					}
+					dstHash, err := hasher.HashFile(algo, dstAbsPath)
+					if err != nil {
+						return 0, fmt.Errorf("hashing dest after delta: %w", err)
+					}
+					if srcHash != dstHash {
+						return 0, fmt.Errorf("checksum mismatch after delta: src %s dest %s", srcHash, dstHash)
+					}
+					_ = dstLocal.Chtimes(fi.RelPath, fi.ModTime)
+					if fi.Permissions != 0 {
+						_ = dstLocal.Chmod(fi.RelPath, fi.Permissions)
+					}
+					if err := e.manifest.Put(ctx, &manifest.Entry{
+						JobID:       cfg.JobID,
+						RelPath:     fi.RelPath,
+						ContentHash: srcHash,
+						HashAlgo:    algo,
+						SizeBytes:   written,
+						ModTime:     fi.ModTime,
+						Permissions: fi.Permissions,
+						SyncedAt:    time.Now(),
+					}); err != nil {
+						return 0, fmt.Errorf("updating manifest: %w", err)
+					}
+					return written, nil
+				}
+			}
 		}
 	}
 
@@ -978,6 +1052,72 @@ func indexFiles(files []FileInfo) map[string]FileInfo {
 func inDestIndex(idx map[string]FileInfo, relPath string) bool {
 	_, ok := idx[relPath]
 	return ok
+}
+
+// tryDeltaTransfer attempts a rolling-checksum delta transfer from srcAbsPath to
+// dstAbsPath. It returns (bytesWritten, true, nil) on success, (0, false, nil)
+// when delta is not applicable or not beneficial (caller should fall back to a
+// full copy), or (0, false, err) on a hard failure that should be propagated.
+//
+// Delta is skipped when:
+//   - cfg.UseDelta is false
+//   - the source file is smaller than DeltaMinBytes (default 64 KiB)
+//   - the destination file does not yet exist
+//   - the computed delta would transfer >= 90% of the file as literals
+//
+// On any non-fatal internal error (e.g. signature computation, diff) the
+// function degrades gracefully to (0, false, nil) so the caller can retry
+// with a plain copy.
+func tryDeltaTransfer(cfg Config, srcAbsPath, dstAbsPath string) (int64, bool, error) {
+	if !cfg.UseDelta {
+		return 0, false, nil
+	}
+
+	minBytes := cfg.DeltaMinBytes
+	if minBytes <= 0 {
+		minBytes = 65536
+	}
+
+	srcInfo, err := os.Stat(srcAbsPath)
+	if err != nil || srcInfo.Size() < minBytes {
+		return 0, false, nil
+	}
+	if _, err := os.Stat(dstAbsPath); err != nil {
+		return 0, false, nil // dest doesn't exist yet — full copy required
+	}
+
+	blockSize := cfg.DeltaBlockSize
+	if blockSize <= 0 {
+		blockSize = delta.DefaultBlockSize
+	}
+
+	sig, err := delta.ComputeSignatureFile(dstAbsPath, blockSize)
+	if err != nil {
+		return 0, false, nil // non-fatal: fall back to full copy
+	}
+
+	srcFile, err := os.Open(srcAbsPath)
+	if err != nil {
+		return 0, false, nil
+	}
+	defer srcFile.Close()
+
+	ops, stats, err := delta.Diff(srcFile, sig)
+	if err != nil {
+		return 0, false, nil
+	}
+
+	// Not worth it if nearly everything is new content.
+	if stats.LiteralFraction() >= 0.9 {
+		return 0, false, nil
+	}
+
+	if err := delta.Apply(dstAbsPath, dstAbsPath, ops); err != nil {
+		// Apply failed after potentially modifying the dest — treat as hard error.
+		return 0, false, fmt.Errorf("delta apply: %w", err)
+	}
+
+	return delta.SizeBytes(ops), true, nil
 }
 
 // effectiveAlgo returns the hash algorithm for cfg, defaulting to hasher.Default
