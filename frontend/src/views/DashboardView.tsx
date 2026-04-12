@@ -232,7 +232,7 @@ export function DashboardView({ onNav }: Props) {
           </table>
           {jobs.length === 0 && (
             <div className="empty">
-              <GitMerge size={44}/>
+              <RefreshCw size={44}/>
               <div className="empty-title">No sync jobs</div>
               <div className="empty-desc">Create a job to start syncing directories.</div>
               <Button variant="primary" onClick={() => onNav('new-job')}>New Job</Button>

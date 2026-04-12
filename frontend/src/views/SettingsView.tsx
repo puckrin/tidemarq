@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, Moon, Sun } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { listUsers, createUser, updateUser, deleteUser, getHealth,
          listNotificationTargets, createNotificationTarget, deleteNotificationTarget,
@@ -60,7 +60,12 @@ function useIsDefaultPassword(users: User[]) {
   return { show, dismiss }
 }
 
-export function SettingsView() {
+interface Props {
+  theme: 'dark' | 'light'
+  onToggleTheme: () => void
+}
+
+export function SettingsView({ theme, onToggleTheme }: Props) {
   const [tab, setTab] = useState<Tab>('general')
   const { user: me } = useAuth()
   const qc    = useQueryClient()
@@ -190,6 +195,18 @@ export function SettingsView() {
       {/* ── General ──────────────────────────────────────── */}
       {tab === 'general' && (
         <div>
+          <div className="ssec">
+            <div className="ssec-title">Appearance</div>
+            <div className="srow">
+              <div>
+                <div className="srow-name">Theme</div>
+                <div className="srow-desc">Switch between light and dark mode</div>
+              </div>
+              <button className="icon-btn" onClick={onToggleTheme} title="Toggle theme" style={{ width: 36, height: 36 }}>
+                {theme === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
+              </button>
+            </div>
+          </div>
           <div className="ssec">
             <div className="ssec-title">Sync Defaults</div>
             <div className="srow">

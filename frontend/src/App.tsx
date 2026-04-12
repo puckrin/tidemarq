@@ -5,7 +5,6 @@ import { ToastProvider } from './components/Toast'
 import { AuditLogProvider } from './store/auditLog'
 import { JobProgressProvider } from './store/jobProgress'
 import { Sidebar, type View } from './components/Sidebar'
-import { Topbar } from './components/Topbar'
 import { useTheme } from './hooks/useTheme'
 import { useQuery } from '@tanstack/react-query'
 import { listConflicts, listJobs, listQuarantine } from './api/client'
@@ -82,7 +81,6 @@ function Shell() {
       <div style={{ display: 'flex', width: '100%', height: '100%' }}>
         <Sidebar current={view} onNav={nav} conflictCount={pendingConflicts} quarantineCount={quarantineCount} />
         <div className="main">
-          <Topbar theme={theme} onToggleTheme={toggle} />
           <div className="page">
             {view === 'dashboard'  && <DashboardView onNav={nav} />}
             {view === 'jobs'       && <JobsView onNav={nav} />}
@@ -93,7 +91,7 @@ function Shell() {
             {view === 'quarantine' && <QuarantineView onNav={nav} />}
             {view === 'audit'      && <AuditView onNav={nav} />}
             {view === 'mounts'     && <MountsView />}
-            {view === 'settings'   && <SettingsView />}
+            {view === 'settings'   && <SettingsView theme={theme} onToggleTheme={toggle} />}
           </div>
         </div>
       </div>

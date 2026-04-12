@@ -2,8 +2,8 @@ services:
   tidemarq:
     build: .
     ports:
-      - "80:8080"
-      - "8443:8443"
+      - "8716:8716"
+      - "8717:8717"
     volumes:
       - tidemarq_data:/data
     environment:

@@ -6,8 +6,8 @@
 # without them. Everything else has a sensible default.
 
 server:
-  http_port: 8080      # HTTP (redirects to HTTPS)
-  https_port: 8443     # HTTPS
+  http_port: 8716      # HTTP (redirects to HTTPS)
+  https_port: 8717     # HTTPS
   data_dir: /data      # Persistent storage root (mount a volume here)
   static_dir: /app/frontend/dist
 

@@ -39,9 +39,6 @@ body {
 
 /* ── MAIN LAYOUT ─────────────────────────────────────── */
 .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-.topbar { height: 65px; min-height: 65px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 24px; gap: 12px; }
-.topbar-title { font-size: 17px; font-weight: 600; flex: 1; }
-.topbar-actions { display: flex; align-items: center; gap: 8px; }
 .icon-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius); cursor: pointer; color: var(--text2); border: none; background: transparent; transition: background .12s, color .12s; }
 .icon-btn:hover { background: var(--hover); color: var(--text); }
 /* Logout button lives on the always-dark sidebar — override with sidebar-native colours */

@@ -45,8 +45,8 @@ type AdminConfig struct {
 func Load(path string) (*Config, error) {
 	v := viper.New()
 
-	v.SetDefault("server.http_port", 8080)
-	v.SetDefault("server.https_port", 8443)
+	v.SetDefault("server.http_port", 8716)
+	v.SetDefault("server.https_port", 8717)
 	v.SetDefault("server.data_dir", "/data")
 	v.SetDefault("server.static_dir", "/app/frontend/dist")
 	v.SetDefault("database.path", "/data/tidemarq.db")
