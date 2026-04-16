@@ -828,3 +828,192 @@ func TestEngine_ChecksumVerification(t *testing.T) {
 		t.Errorf("content: got %q, want %q", got, "source content")
 	}
 }
+
+// --- Delta transfer tests ---
+
+// TestEngine_DeltaTransfer_ProducesCorrectContent verifies that enabling delta
+// transfer on a file that already exists at the destination produces content
+// identical to the (modified) source after the second run.
+func TestEngine_DeltaTransfer_ProducesCorrectContent(t *testing.T) {
+	eng, jobID, src, dst := testEnv(t)
+
+	// File must exceed the default DeltaMinBytes threshold (64 KiB).
+	base := strings.Repeat("A", 70000)
+	path := filepath.Join(src, "large.bin")
+	writeFile(t, path, base)
+
+	// FullChecksum forces hash-based change detection so the test is not
+	// sensitive to filesystem mtime resolution (the two writes may land in
+	// the same clock tick on fast machines or coarse-grained filesystems).
+	cfg := engine.Config{
+		JobID:           jobID,
+		SourcePath:      src,
+		DestinationPath: dst,
+		UseDelta:        true,
+		FullChecksum:    true,
+	}
+
+	// First run: destination does not exist — falls back to a full copy.
+	if _, err := eng.Run(context.Background(), cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Modify a small region near the start of the file.
+	modified := "BBBB" + base[4:]
+	writeFile(t, path, modified)
+
+	// Second run: destination exists — delta transfer should apply.
+	result, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dst, "large.bin"))
+	if err != nil {
+		t.Fatalf("read dest: %v", err)
+	}
+	if string(got) != modified {
+		t.Errorf("dest content mismatch after delta: got %d bytes, want %d bytes", len(got), len(modified))
+	}
+}
+
+// TestEngine_DeltaTransfer_Idempotent verifies that enabling delta does not
+// break idempotency: a second run with no source changes skips the file.
+func TestEngine_DeltaTransfer_Idempotent(t *testing.T) {
+	eng, jobID, src, dst := testEnv(t)
+
+	writeFile(t, filepath.Join(src, "large.bin"), strings.Repeat("C", 70000))
+
+	cfg := engine.Config{
+		JobID:           jobID,
+		SourcePath:      src,
+		DestinationPath: dst,
+		UseDelta:        true,
+	}
+
+	first, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if first.FilesCopied != 1 {
+		t.Fatalf("first run: FilesCopied=%d, want 1", first.FilesCopied)
+	}
+
+	second, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if second.FilesCopied != 0 {
+		t.Errorf("second run: FilesCopied=%d, want 0 (idempotency)", second.FilesCopied)
+	}
+	if second.FilesSkipped != 1 {
+		t.Errorf("second run: FilesSkipped=%d, want 1", second.FilesSkipped)
+	}
+}
+
+// TestEngine_DeltaTransfer_FirstRunWithNoDestination verifies that when delta
+// is enabled but the destination file does not yet exist, the engine falls back
+// to a full copy and produces the correct content.
+func TestEngine_DeltaTransfer_FirstRunWithNoDestination(t *testing.T) {
+	eng, jobID, src, dst := testEnv(t)
+
+	content := strings.Repeat("D", 70000)
+	writeFile(t, filepath.Join(src, "large.bin"), content)
+
+	cfg := engine.Config{
+		JobID:           jobID,
+		SourcePath:      src,
+		DestinationPath: dst,
+		UseDelta:        true,
+	}
+
+	result, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.FilesCopied != 1 {
+		t.Errorf("FilesCopied=%d, want 1", result.FilesCopied)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dst, "large.bin"))
+	if err != nil {
+		t.Fatalf("read dest: %v", err)
+	}
+	if string(got) != content {
+		t.Errorf("content mismatch: got %d bytes, want %d", len(got), len(content))
+	}
+}
+
+// TestEngine_DeltaTransfer_SmallFileCopiedCorrectly verifies that files below
+// the DeltaMinBytes threshold are handled correctly when delta is enabled — they
+// are copied in full without error.
+func TestEngine_DeltaTransfer_SmallFileCopiedCorrectly(t *testing.T) {
+	eng, jobID, src, dst := testEnv(t)
+
+	writeFile(t, filepath.Join(src, "small.txt"), "tiny file content")
+
+	result, err := eng.Run(context.Background(), engine.Config{
+		JobID:           jobID,
+		SourcePath:      src,
+		DestinationPath: dst,
+		UseDelta:        true,
+		DeltaMinBytes:   65536, // explicit threshold; file is well below it
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dst, "small.txt"))
+	if err != nil {
+		t.Fatalf("read dest: %v", err)
+	}
+	if string(got) != "tiny file content" {
+		t.Errorf("dest content: got %q, want %q", string(got), "tiny file content")
+	}
+}
+
+// TestEngine_DeltaTransfer_MultipleRuns verifies that delta transfer can be
+// applied repeatedly across several modification cycles.
+func TestEngine_DeltaTransfer_MultipleRuns(t *testing.T) {
+	eng, jobID, src, dst := testEnv(t)
+
+	path := filepath.Join(src, "large.bin")
+	// FullChecksum ensures each run detects the content change regardless of
+	// mtime resolution — rapid writes may land in the same clock tick.
+	cfg := engine.Config{
+		JobID:           jobID,
+		SourcePath:      src,
+		DestinationPath: dst,
+		UseDelta:        true,
+		FullChecksum:    true,
+	}
+
+	for i, content := range []string{
+		strings.Repeat("X", 70000),
+		strings.Repeat("X", 69900) + strings.Repeat("Y", 100),
+		strings.Repeat("Z", 70000),
+	} {
+		writeFile(t, path, content)
+		result, err := eng.Run(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("run %d: %v", i, err)
+		}
+		if len(result.Errors) != 0 {
+			t.Fatalf("run %d: errors: %v", i, result.Errors)
+		}
+
+		got, err := os.ReadFile(filepath.Join(dst, "large.bin"))
+		if err != nil {
+			t.Fatalf("run %d: read dest: %v", i, err)
+		}
+		if string(got) != content {
+			t.Errorf("run %d: dest content mismatch (%d bytes vs %d bytes)", i, len(got), len(content))
+		}
+	}
+}

@@ -411,3 +411,116 @@ func TestResolve_KeepBoth_CreatesConflictFileAtResolutionTime(t *testing.T) {
 		t.Error("expected a .conflict.<ts> file to be created by keep-both")
 	}
 }
+
+// TestResolve_KeepSource_MissingSourceFile verifies that Resolve("keep-source")
+// succeeds and marks the conflict resolved even when the source file no longer
+// exists — the engine may have already removed it or an external process deleted it.
+func TestResolve_KeepSource_MissingSourceFile(t *testing.T) {
+	d := newTestDB(t)
+	jobID := seedJob(t, d)
+	svc := conflicts.New(d)
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "src", "file.txt")
+	destPath := filepath.Join(dir, "dest", "file.txt")
+
+	// Only the destination exists; source is absent.
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destPath, []byte("dest version"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	srcState := conflicts.FileState{Exists: true, ContentHash: "s", ModTime: time.Now()}
+	destState := conflicts.FileState{Exists: true, ContentHash: "d", ModTime: time.Now()}
+
+	c, err := svc.Record(context.Background(), jobID, "file.txt", "ask-user", "", srcState, destState)
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	if err := svc.Resolve(context.Background(), c.ID, "keep-source", srcPath, destPath); err != nil {
+		t.Fatalf("Resolve keep-source with missing source: %v", err)
+	}
+
+	got, err := svc.Get(context.Background(), c.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != "resolved" {
+		t.Errorf("status: got %q, want resolved", got.Status)
+	}
+}
+
+// TestResolve_KeepDest_MissingDestFile verifies that Resolve("keep-dest") succeeds
+// and marks the conflict resolved when the destination file no longer exists.
+func TestResolve_KeepDest_MissingDestFile(t *testing.T) {
+	d := newTestDB(t)
+	jobID := seedJob(t, d)
+	svc := conflicts.New(d)
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "src", "file.txt")
+	destPath := filepath.Join(dir, "dest", "file.txt")
+
+	// Only the source exists; destination is absent.
+	if err := os.MkdirAll(filepath.Dir(srcPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(srcPath, []byte("source version"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	srcState := conflicts.FileState{Exists: true, ContentHash: "s", ModTime: time.Now()}
+	destState := conflicts.FileState{Exists: true, ContentHash: "d", ModTime: time.Now()}
+
+	c, err := svc.Record(context.Background(), jobID, "file.txt", "ask-user", "", srcState, destState)
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	if err := svc.Resolve(context.Background(), c.ID, "keep-dest", srcPath, destPath); err != nil {
+		t.Fatalf("Resolve keep-dest with missing dest: %v", err)
+	}
+
+	got, err := svc.Get(context.Background(), c.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != "resolved" {
+		t.Errorf("status: got %q, want resolved", got.Status)
+	}
+}
+
+// TestResolve_KeepBoth_MissingBothFiles verifies that Resolve("keep-both")
+// succeeds when neither file exists — the DB record is still marked resolved.
+func TestResolve_KeepBoth_MissingBothFiles(t *testing.T) {
+	d := newTestDB(t)
+	jobID := seedJob(t, d)
+	svc := conflicts.New(d)
+
+	// Neither file is created on disk.
+	srcPath := filepath.Join(t.TempDir(), "src", "file.txt")
+	destPath := filepath.Join(t.TempDir(), "dest", "file.txt")
+
+	srcState := conflicts.FileState{Exists: true, ContentHash: "s", ModTime: time.Now()}
+	destState := conflicts.FileState{Exists: true, ContentHash: "d", ModTime: time.Now()}
+
+	c, err := svc.Record(context.Background(), jobID, "file.txt", "ask-user", "", srcState, destState)
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	if err := svc.Resolve(context.Background(), c.ID, "keep-both", srcPath, destPath); err != nil {
+		t.Fatalf("Resolve keep-both with missing files: %v", err)
+	}
+
+	got, err := svc.Get(context.Background(), c.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != "resolved" {
+		t.Errorf("status: got %q, want resolved", got.Status)
+	}
+}

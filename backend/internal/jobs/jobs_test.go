@@ -370,3 +370,82 @@ func TestService_WatchTrigger(t *testing.T) {
 	}
 	t.Error("watched.txt did not appear in destination within 10 seconds")
 }
+
+// TestService_CreateWithDeltaFields verifies that delta configuration is
+// persisted through the service layer and returned correctly by Get.
+func TestService_CreateWithDeltaFields(t *testing.T) {
+	svc, src, dst := newTestService(t)
+	ctx := context.Background()
+
+	j, err := svc.Create(ctx, jobs.CreateParams{
+		Name:            "delta-job",
+		SourcePath:      src,
+		DestinationPath: dst,
+		Mode:            "one-way-backup",
+		UseDelta:        true,
+		DeltaBlockSize:  4096,
+		DeltaMinBytes:   131072,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !j.UseDelta {
+		t.Error("Create: UseDelta = false, want true")
+	}
+	if j.DeltaBlockSize != 4096 {
+		t.Errorf("Create: DeltaBlockSize = %d, want 4096", j.DeltaBlockSize)
+	}
+	if j.DeltaMinBytes != 131072 {
+		t.Errorf("Create: DeltaMinBytes = %d, want 131072", j.DeltaMinBytes)
+	}
+
+	got, err := svc.Get(ctx, j.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.UseDelta {
+		t.Error("Get: UseDelta = false, want true")
+	}
+}
+
+// TestService_UpdateDeltaFields verifies that delta settings can be enabled and
+// changed via Update and are reflected in subsequent Get calls.
+func TestService_UpdateDeltaFields(t *testing.T) {
+	svc, src, dst := newTestService(t)
+	ctx := context.Background()
+
+	j, err := svc.Create(ctx, jobs.CreateParams{
+		Name:            "update-delta-job",
+		SourcePath:      src,
+		DestinationPath: dst,
+		Mode:            "one-way-backup",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if j.UseDelta {
+		t.Fatal("newly created job should not have delta enabled")
+	}
+
+	updated, err := svc.Update(ctx, j.ID, jobs.UpdateParams{
+		Name:            j.Name,
+		SourcePath:      j.SourcePath,
+		DestinationPath: j.DestinationPath,
+		Mode:            j.Mode,
+		UseDelta:        true,
+		DeltaBlockSize:  8192,
+		DeltaMinBytes:   65536,
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if !updated.UseDelta {
+		t.Error("Update: UseDelta = false, want true")
+	}
+	if updated.DeltaBlockSize != 8192 {
+		t.Errorf("Update: DeltaBlockSize = %d, want 8192", updated.DeltaBlockSize)
+	}
+	if updated.DeltaMinBytes != 65536 {
+		t.Errorf("Update: DeltaMinBytes = %d, want 65536", updated.DeltaMinBytes)
+	}
+}
