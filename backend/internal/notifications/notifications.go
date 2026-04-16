@@ -1,5 +1,4 @@
-// Package notifications delivers job lifecycle events to configured targets
-// (SMTP, webhook, Gotify).
+// Package notifications delivers job lifecycle events to configured webhook targets.
 package notifications
 
 import (
@@ -9,11 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
-	"net/smtp"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/tidemarq/tidemarq/internal/crypt"
@@ -26,28 +21,11 @@ var ErrNotFound = errors.New("notification target not found")
 // ErrConflict is returned on name uniqueness violations.
 var ErrConflict = errors.New("notification target name already in use")
 
-// SMTPConfig holds configuration for an SMTP notification target.
-type SMTPConfig struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	From     string `json:"from"`
-	To       string `json:"to"` // comma-separated
-}
-
 // WebhookConfig holds configuration for an HTTP webhook target.
 type WebhookConfig struct {
 	URL     string            `json:"url"`
 	Method  string            `json:"method"`  // default: POST
 	Headers map[string]string `json:"headers"` // optional extra headers
-}
-
-// GotifyConfig holds configuration for a Gotify push notification target.
-type GotifyConfig struct {
-	URL      string `json:"url"`
-	AppToken string `json:"app_token"`
-	Priority int    `json:"priority"`
 }
 
 // TargetInput is the caller-facing create/update payload.
@@ -209,54 +187,17 @@ func (s *Service) Notify(ctx context.Context, event string, jobID int64, jobName
 	}
 }
 
-func (s *Service) dispatch(typ string, cfgJSON []byte, subject, body, event, jobName, detail string) error {
+func (s *Service) dispatch(typ string, cfgJSON []byte, _, _, event, jobName, detail string) error {
 	switch typ {
-	case "smtp":
-		var cfg SMTPConfig
-		if err := json.Unmarshal(cfgJSON, &cfg); err != nil {
-			return fmt.Errorf("unmarshal smtp config: %w", err)
-		}
-		return sendSMTP(cfg, subject, body)
-
 	case "webhook":
 		var cfg WebhookConfig
 		if err := json.Unmarshal(cfgJSON, &cfg); err != nil {
 			return fmt.Errorf("unmarshal webhook config: %w", err)
 		}
 		return sendWebhook(cfg, event, jobName, detail)
-
-	case "gotify":
-		var cfg GotifyConfig
-		if err := json.Unmarshal(cfgJSON, &cfg); err != nil {
-			return fmt.Errorf("unmarshal gotify config: %w", err)
-		}
-		return sendGotify(cfg, subject, body)
-
 	default:
 		return fmt.Errorf("unknown notification type %q", typ)
 	}
-}
-
-// ─── SMTP ─────────────────────────────────────────────────────────────────────
-
-func sendSMTP(cfg SMTPConfig, subject, body string) error {
-	port := cfg.Port
-	if port == 0 {
-		port = 587
-	}
-	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(port))
-
-	auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
-
-	recipients := strings.Split(cfg.To, ",")
-	for i := range recipients {
-		recipients[i] = strings.TrimSpace(recipients[i])
-	}
-
-	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s",
-		cfg.From, cfg.To, subject, body)
-
-	return smtp.SendMail(addr, auth, cfg.From, recipients, []byte(msg))
 }
 
 // ─── Webhook ──────────────────────────────────────────────────────────────────
@@ -296,45 +237,6 @@ func sendWebhook(cfg WebhookConfig, event, jobName, detail string) error {
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("webhook returned %d", resp.StatusCode)
-	}
-	return nil
-}
-
-// ─── Gotify ───────────────────────────────────────────────────────────────────
-
-func sendGotify(cfg GotifyConfig, title, message string) error {
-	priority := cfg.Priority
-	if priority == 0 {
-		priority = 5
-	}
-
-	payload := map[string]any{
-		"title":    title,
-		"message":  message,
-		"priority": priority,
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	url := strings.TrimRight(cfg.URL, "/") + "/message?token=" + cfg.AppToken
-
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("gotify returned %d", resp.StatusCode)
 	}
 	return nil
 }

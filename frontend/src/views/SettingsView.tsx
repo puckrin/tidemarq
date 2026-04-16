@@ -364,8 +364,6 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
                 <label className="fl">Type</label>
                 <select className="fs" value={newTarget.type} onChange={e => setNewTarget(t => ({ ...t, type: e.target.value as NotificationTarget['type'] }))}>
                   <option value="webhook">Webhook</option>
-                  <option value="smtp">SMTP</option>
-                  <option value="gotify">Gotify</option>
                 </select>
               </div>
               <div className="fg" style={{ marginBottom: 0 }}>
@@ -383,11 +381,7 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
                 style={{ fontSize: 12, resize: 'vertical', minHeight: 80 }}
                 value={newTarget.config}
                 onChange={e => setNewTarget(t => ({ ...t, config: e.target.value }))}
-                placeholder={newTarget.type === 'webhook'
-                  ? '{"url":"https://hooks.example.com/...","method":"POST"}'
-                  : newTarget.type === 'smtp'
-                    ? '{"host":"smtp.example.com","port":587,"username":"user","password":"...","from":"tidemarq@example.com","to":"admin@example.com"}'
-                    : '{"url":"https://gotify.example.com","app_token":"...","priority":5}'}
+                placeholder='{"url":"https://hooks.example.com/...","method":"POST","headers":{"Authorization":"Bearer ..."}}'
               />
             </div>
             <div style={{ marginTop: 12 }}>

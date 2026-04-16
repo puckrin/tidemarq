@@ -120,7 +120,7 @@ export interface MountInput {
 export interface NotificationTarget {
   id: number
   name: string
-  type: 'smtp' | 'webhook' | 'gotify'
+  type: 'webhook'
   enabled: boolean
   created_at: string
   updated_at: string

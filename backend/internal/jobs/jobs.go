@@ -19,6 +19,7 @@ import (
 	"github.com/tidemarq/tidemarq/internal/hasher"
 	"github.com/tidemarq/tidemarq/internal/mountfs"
 	"github.com/tidemarq/tidemarq/internal/mounts"
+	"github.com/tidemarq/tidemarq/internal/notifications"
 	"github.com/tidemarq/tidemarq/internal/versions"
 	"github.com/tidemarq/tidemarq/internal/watch"
 	"github.com/tidemarq/tidemarq/internal/ws"
@@ -86,8 +87,9 @@ type Service struct {
 	watcher      *watch.Manager
 	versionsSvc  *versions.Service
 	conflictsSvc *conflicts.Service
-	mountsSvc    *mounts.Service // may be nil if mounts feature is disabled
-	auditSvc     *audit.Service  // may be nil; used to persist job lifecycle events
+	mountsSvc    *mounts.Service        // may be nil if mounts feature is disabled
+	auditSvc     *audit.Service         // may be nil; used to persist job lifecycle events
+	notifSvc     *notifications.Service // may be nil; used to dispatch webhook notifications
 
 	scheduler *cron.Cron
 
@@ -97,7 +99,7 @@ type Service struct {
 }
 
 // New creates a Service. Call Start to activate scheduling and watching.
-func New(database *db.DB, eng *engine.Engine, hub *ws.Hub, watcher *watch.Manager, versionsSvc *versions.Service, conflictsSvc *conflicts.Service, mountsSvc *mounts.Service, auditSvc *audit.Service) *Service {
+func New(database *db.DB, eng *engine.Engine, hub *ws.Hub, watcher *watch.Manager, versionsSvc *versions.Service, conflictsSvc *conflicts.Service, mountsSvc *mounts.Service, auditSvc *audit.Service, notifSvc *notifications.Service) *Service {
 	return &Service{
 		db:           database,
 		engine:       eng,
@@ -107,6 +109,7 @@ func New(database *db.DB, eng *engine.Engine, hub *ws.Hub, watcher *watch.Manage
 		conflictsSvc: conflictsSvc,
 		mountsSvc:    mountsSvc,
 		auditSvc:     auditSvc,
+		notifSvc:     notifSvc,
 		scheduler:    cron.New(),
 		running:      make(map[int64]*runContext),
 		cronIDs:      make(map[int64]cron.EntryID),
@@ -364,6 +367,9 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 	if s.auditSvc != nil {
 		s.auditSvc.LogJob(ctx, job.ID, job.Name, "system", "job_started", "Job started", "")
 	}
+	if s.notifSvc != nil {
+		s.notifSvc.Notify(ctx, "job_started", job.ID, job.Name, "")
+	}
 
 	// Open mount FS connections if the job uses network mounts.
 	srcFS, dstFS, fsErr := s.openJobFS(ctx, job)
@@ -455,6 +461,9 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		if s.auditSvc != nil {
 			s.auditSvc.LogJob(context.Background(), job.ID, job.Name, "system", "job_failed", "Job error", msg)
 		}
+		if s.notifSvc != nil {
+			s.notifSvc.Notify(context.Background(), "job_failed", job.ID, job.Name, msg)
+		}
 		return
 	}
 
@@ -474,6 +483,9 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		if s.auditSvc != nil {
 			s.auditSvc.LogJob(context.Background(), job.ID, job.Name, "system", "job_failed", "Job error", msg)
 		}
+		if s.notifSvc != nil {
+			s.notifSvc.Notify(context.Background(), "job_failed", job.ID, job.Name, msg)
+		}
 		return
 	}
 
@@ -485,9 +497,16 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		FilesDone:  total,
 		FilesTotal: total,
 	})
+	detail := fmt.Sprintf("%d files processed (%d copied, %d skipped)", total, result.FilesCopied, result.FilesSkipped)
 	if s.auditSvc != nil {
-		detail := fmt.Sprintf("%d files processed (%d copied, %d skipped)", total, result.FilesCopied, result.FilesSkipped)
 		s.auditSvc.LogJob(context.Background(), job.ID, job.Name, "system", "job_completed", "Job completed", detail)
+	}
+	if s.notifSvc != nil {
+		s.notifSvc.Notify(context.Background(), "job_completed", job.ID, job.Name, detail)
+		if result.Conflicts > 0 {
+			conflictDetail := fmt.Sprintf("%d conflict(s) detected", result.Conflicts)
+			s.notifSvc.Notify(context.Background(), "conflict_detected", job.ID, job.Name, conflictDetail)
+		}
 	}
 }
 
