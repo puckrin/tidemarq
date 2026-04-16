@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/tidemarq/tidemarq/internal/db"
 	"github.com/tidemarq/tidemarq/internal/notifications"
 )
 
@@ -123,7 +124,7 @@ func (s *Server) handleListNotificationRules(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if rules == nil {
-		rules = nil
+		rules = []*db.NotificationRule{}
 	}
 	writeJSON(w, http.StatusOK, rules)
 }
