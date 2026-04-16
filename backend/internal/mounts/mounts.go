@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"time"
 
 	"github.com/tidemarq/tidemarq/internal/crypt"
@@ -186,34 +185,18 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// TestConnectivity verifies that the host is reachable. It performs a TCP
-// dial only — it does not authenticate. Use Open for a full connection test.
+// TestConnectivity opens a fully authenticated connection to the mount and
+// immediately closes it. This verifies host reachability, credentials, and
+// (for SFTP) the host key.
 func (s *Service) TestConnectivity(ctx context.Context, id int64) error {
-	m, err := s.db.GetMount(ctx, id)
-	if errors.Is(err, db.ErrNotFound) {
+	fs, err := s.Open(ctx, id)
+	if errors.Is(err, ErrNotFound) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-
-	port := m.Port
-	if port == 0 {
-		if m.Type == "sftp" {
-			port = 22
-		} else {
-			port = 445
-		}
-	}
-
-	addr := fmt.Sprintf("%s:%d", m.Host, port)
-	dialer := net.Dialer{Timeout: 5 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return fmt.Errorf("cannot reach %s: %w", addr, err)
-	}
-	conn.Close()
-	return nil
+	return fs.Close()
 }
 
 // OpenAt returns a live MountFS connection for the given mount, rooted at

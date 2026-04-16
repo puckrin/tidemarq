@@ -65,14 +65,9 @@ func (s *Server) handleRestoreVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListQuarantine(w http.ResponseWriter, r *http.Request) {
-	var jobID int64
-	if q := r.URL.Query().Get("job_id"); q != "" {
-		id, err := strconv.ParseInt(q, 10, 64)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid job_id", "bad_request")
-			return
-		}
-		jobID = id
+	jobID, ok := parseOptionalJobID(w, r)
+	if !ok {
+		return
 	}
 
 	list, err := s.versionsSvc.ListQuarantine(r.Context(), jobID)
@@ -87,14 +82,9 @@ func (s *Server) handleListQuarantine(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListRemovedQuarantine(w http.ResponseWriter, r *http.Request) {
-	var jobID int64
-	if q := r.URL.Query().Get("job_id"); q != "" {
-		id, err := strconv.ParseInt(q, 10, 64)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid job_id", "bad_request")
-			return
-		}
-		jobID = id
+	jobID, ok := parseOptionalJobID(w, r)
+	if !ok {
+		return
 	}
 
 	list, err := s.versionsSvc.ListRemovedQuarantine(r.Context(), jobID)
@@ -109,14 +99,9 @@ func (s *Server) handleListRemovedQuarantine(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleClearRemovedQuarantine(w http.ResponseWriter, r *http.Request) {
-	var jobID int64
-	if q := r.URL.Query().Get("job_id"); q != "" {
-		id, err := strconv.ParseInt(q, 10, 64)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid job_id", "bad_request")
-			return
-		}
-		jobID = id
+	jobID, ok := parseOptionalJobID(w, r)
+	if !ok {
+		return
 	}
 	if err := s.versionsSvc.ClearRemovedQuarantine(r.Context(), jobID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to clear removed quarantine", "internal_error")

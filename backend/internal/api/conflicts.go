@@ -14,14 +14,9 @@ import (
 )
 
 func (s *Server) handleListConflicts(w http.ResponseWriter, r *http.Request) {
-	var jobID int64
-	if q := r.URL.Query().Get("job_id"); q != "" {
-		id, err := strconv.ParseInt(q, 10, 64)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid job_id", "bad_request")
-			return
-		}
-		jobID = id
+	jobID, ok := parseOptionalJobID(w, r)
+	if !ok {
+		return
 	}
 
 	list, err := s.conflictsSvc.List(r.Context(), jobID)
@@ -99,14 +94,9 @@ func (s *Server) handleResolveConflict(w http.ResponseWriter, r *http.Request) {
 
 // handleClearResolvedConflicts handles POST /api/v1/conflicts/clear-resolved.
 func (s *Server) handleClearResolvedConflicts(w http.ResponseWriter, r *http.Request) {
-	var jobID int64
-	if q := r.URL.Query().Get("job_id"); q != "" {
-		id, err := strconv.ParseInt(q, 10, 64)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid job_id", "bad_request")
-			return
-		}
-		jobID = id
+	jobID, ok := parseOptionalJobID(w, r)
+	if !ok {
+		return
 	}
 	if err := s.conflictsSvc.ClearResolved(r.Context(), jobID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to clear resolved conflicts", "internal_error")

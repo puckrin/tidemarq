@@ -1,13 +1,12 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './store/auth'
 import { ToastProvider } from './components/Toast'
-import { AuditLogProvider } from './store/auditLog'
 import { JobProgressProvider } from './store/jobProgress'
 import { Sidebar, type View } from './components/Sidebar'
 import { useTheme } from './hooks/useTheme'
 import { useQuery } from '@tanstack/react-query'
-import { listConflicts, listJobs, listQuarantine } from './api/client'
+import { listConflicts, listQuarantine } from './api/client'
 
 import { LoginView }     from './views/LoginView'
 import { DashboardView } from './views/DashboardView'
@@ -35,13 +34,6 @@ function Shell() {
 
   useEffect(() => { setAuthed(!!user) }, [user])
 
-  const { data: jobs = [] } = useQuery({
-    queryKey: ['jobs'],
-    queryFn: listJobs,
-    refetchInterval: 30000,
-    enabled: authed,
-  })
-
   const { data: conflicts = [] } = useQuery({
     queryKey: ['conflicts'],
     queryFn: () => listConflicts(),
@@ -59,13 +51,6 @@ function Shell() {
   })
   const quarantineCount = quarantine.length
 
-  // Build a stable jobId→name map for the audit log
-  const jobNames = useMemo(() => {
-    const m: Record<number, string> = {}
-    jobs.forEach(j => { m[j.id] = j.name })
-    return m
-  }, [jobs])
-
   const nav = (v: View, id?: number) => {
     setView(v)
     if (id != null) setJobId(id)
@@ -77,7 +62,6 @@ function Shell() {
 
   return (
     <JobProgressProvider>
-    <AuditLogProvider jobNames={jobNames}>
       <div style={{ display: 'flex', width: '100%', height: '100%' }}>
         <Sidebar current={view} onNav={nav} conflictCount={pendingConflicts} quarantineCount={quarantineCount} />
         <div className="main">
@@ -95,7 +79,6 @@ function Shell() {
           </div>
         </div>
       </div>
-    </AuditLogProvider>
     </JobProgressProvider>
   )
 }

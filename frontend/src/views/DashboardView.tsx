@@ -106,7 +106,7 @@ export function DashboardView({ onNav }: Props) {
 
         {/* Currently running */}
         <Card style={{ flex: 1 }}>
-          <CardHeader title="Currently Running" action={<Badge variant="running">{running.length} active</Badge>} />
+          <CardHeader title="Currently Running" action={<Badge variant={running.length > 0 ? 'running' : 'disabled'}>{running.length} active</Badge>} />
           {running.map(j => {
             const p = progress[j.id]
             const pct = p?.files_total ? Math.round((p.files_done ?? 0) / p.files_total * 100) : 0
