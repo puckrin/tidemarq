@@ -46,6 +46,10 @@ func run(configPath string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
+	if err := config.EnsureJWTSecret(cfg); err != nil {
+		return fmt.Errorf("ensuring jwt secret: %w", err)
+	}
+
 	database, err := db.Open(cfg.Database.Path)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)

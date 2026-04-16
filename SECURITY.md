@@ -1,31 +1,24 @@
 # Security Policy
 
+tidemarq is a personal side project. I'll do my best to address security issues but can't commit to fixed response times.
+
 ## Supported Versions
 
-Only the latest release receives security fixes.
-
-| Version | Supported |
-|---------|-----------|
-| latest  | ✅        |
-| older   | ❌        |
+Only the latest release receives fixes.
 
 ## Reporting a Vulnerability
 
-**Please do not report security vulnerabilities through public GitHub issues.**
+Please don't open a public GitHub issue for security vulnerabilities.
 
 Use GitHub's private vulnerability reporting instead:
 1. Go to the **Security** tab of this repository
 2. Click **Report a vulnerability**
 3. Fill in the details
 
-You can expect an initial response within **72 hours** and a fix or mitigation
-plan within **14 days** for confirmed vulnerabilities.
+I'll aim to respond when I can. Please include:
 
-Please include as much of the following as possible:
-
-- A description of the vulnerability and its potential impact
+- What the vulnerability is and what it could allow
 - Steps to reproduce or a proof-of-concept
 - The version of tidemarq affected
-- Any suggested mitigations
 
-We will credit reporters in the release notes unless you prefer to remain anonymous.
+If you'd prefer not to be credited in the release notes, just say so.

@@ -1,7 +1,11 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -52,7 +56,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("database.path", "/data/tidemarq.db")
 	v.SetDefault("tls.cert_file", "/data/certs/server.crt")
 	v.SetDefault("tls.key_file", "/data/certs/server.key")
-	v.SetDefault("auth.jwt_secret", "change-me-in-production")
+	v.SetDefault("auth.jwt_secret", "")
 	v.SetDefault("auth.jwt_ttl", 24*time.Hour)
 	v.SetDefault("admin.username", "admin")
 	v.SetDefault("admin.password", "admin")
@@ -74,4 +78,42 @@ func Load(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// EnsureJWTSecret guarantees cfg.Auth.JWTSecret is set to a non-empty value.
+// If the config/env already provides one it is used unchanged.
+// Otherwise the secret is loaded from (or generated and saved to)
+// <data_dir>/.jwt_secret so it survives restarts without user intervention.
+func EnsureJWTSecret(cfg *Config) error {
+	if cfg.Auth.JWTSecret != "" {
+		return nil
+	}
+
+	secretFile := filepath.Join(cfg.Server.DataDir, ".jwt_secret")
+
+	data, err := os.ReadFile(secretFile)
+	if err == nil {
+		cfg.Auth.JWTSecret = strings.TrimSpace(string(data))
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("reading jwt secret file: %w", err)
+	}
+
+	// Generate a new 32-byte random secret and persist it.
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return fmt.Errorf("generating jwt secret: %w", err)
+	}
+	secret := base64.StdEncoding.EncodeToString(raw)
+
+	if err := os.MkdirAll(cfg.Server.DataDir, 0o700); err != nil {
+		return fmt.Errorf("creating data dir: %w", err)
+	}
+	if err := os.WriteFile(secretFile, []byte(secret+"\n"), 0o600); err != nil {
+		return fmt.Errorf("writing jwt secret file: %w", err)
+	}
+
+	cfg.Auth.JWTSecret = secret
+	return nil
 }
