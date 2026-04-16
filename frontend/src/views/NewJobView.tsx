@@ -385,7 +385,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
                       onChange={e => set({ hash_algo: e.target.value as 'sha256' | 'blake3' })}
                     >
                       <option value="blake3">BLAKE3 (recommended)</option>
-                      <option value="sha256">SHA-256 (auditing &amp; compliance)</option>
+                      <option value="sha256">SHA-256</option>
                     </select>
                     <div className="fhint">
                       Algorithm used to verify file integrity after each transfer and detect changes between runs.
