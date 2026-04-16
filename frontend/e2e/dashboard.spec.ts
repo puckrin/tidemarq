@@ -8,10 +8,10 @@ test.describe('Dashboard', () => {
 
   test('shows summary stat cards', async ({ page }) => {
     await nav(page, /dashboard/i)
-    // Stat cards for jobs, conflicts, quarantine
-    await expect(page.getByText(/sync jobs/i)).toBeVisible()
-    await expect(page.getByText(/conflicts/i)).toBeVisible()
-    await expect(page.getByText(/quarantine/i)).toBeVisible()
+    // Stat cards: Total Jobs, Healthy, Errors, Pending Review
+    await expect(page.locator('.stat-card').filter({ hasText: /total jobs/i })).toBeVisible()
+    await expect(page.locator('.stat-card').filter({ hasText: /healthy/i })).toBeVisible()
+    await expect(page.locator('.stat-card').filter({ hasText: /errors/i })).toBeVisible()
   })
 
   test('health endpoint reports ok', async ({ request }) => {

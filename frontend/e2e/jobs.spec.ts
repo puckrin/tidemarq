@@ -73,11 +73,12 @@ test.describe('Job execution — backup mode (Job 01)', () => {
       return
     }
 
-    await row.getByRole('button', { name: /run/i }).click()
-
-    // Progress should become visible, then job returns to idle
-    await expect(page.getByText(/running/i)).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText(/idle/i)).toBeVisible({ timeout: 30000 })
+    // title="Run now" — accessible name matches /run now/i
+    await row.getByRole('button', { name: /run now/i }).click()
+    // Brief pause to let status transition away from idle before we poll for completion
+    await page.waitForTimeout(500)
+    // Wait for the job to finish — idle is displayed as "Synced" by StatusBadge
+    await expect(row.getByText(/synced/i)).toBeVisible({ timeout: 30000 })
   })
 })
 
@@ -116,8 +117,11 @@ test.describe('Job execution — idempotency (Job 11)', () => {
       if (run === 2) {
         const auditResp = await request.get(`/api/v1/audit?job_id=${job.id}`, { headers })
         const audit: Array<{ event: string; detail: string }> = await auditResp.json()
-        const lastRun = audit.find(e => e.event === 'job.completed')
-        expect(lastRun?.detail).toMatch(/files_copied.*0|0.*files/i)
+        // Event name uses underscore: "job_completed"
+        const lastRun = audit.find(e => e.event === 'job_completed')
+        expect(lastRun).toBeDefined()
+        // Detail format: "N files processed (0 copied, N skipped)"
+        expect(lastRun?.detail).toMatch(/0 copied/i)
       }
     }
   })

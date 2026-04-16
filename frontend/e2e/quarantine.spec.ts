@@ -39,10 +39,10 @@ test.describe('Quarantine', () => {
     await nav(page, /quarantine/i)
 
     // Click Restore for the first entry
-    const row = page.getByRole('row').filter({ hasText: entry.rel_path })
-    await row.getByRole('button', { name: /^Restore$/ }).click()
+    const row = page.getByRole('row').filter({ hasText: entry.rel_path }).first()
+    await row.getByRole('button', { name: /restore/i }).click()
 
-    // Entry should disappear or show restored state
-    await expect(page.getByText(entry.rel_path)).not.toBeVisible({ timeout: 5000 })
+    // After restore the entry moves to "Recently Removed" — check the success toast
+    await expect(page.getByText(/restored to destination/i)).toBeVisible({ timeout: 8000 })
   })
 })
