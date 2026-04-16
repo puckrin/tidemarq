@@ -117,23 +117,6 @@ export interface MountInput {
   sftp_host_key?: string
 }
 
-export interface NotificationTarget {
-  id: number
-  name: string
-  type: 'webhook'
-  enabled: boolean
-  created_at: string
-  updated_at: string
-}
-
-export interface NotificationRule {
-  id: number
-  target_id: number
-  event: 'job_failed' | 'job_completed' | 'conflict_detected' | 'job_started'
-  job_id?: number
-  created_at: string
-}
-
 export interface AuditEntry {
   id: number
   job_id?: number

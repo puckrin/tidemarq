@@ -18,7 +18,6 @@ import (
 	"github.com/tidemarq/tidemarq/internal/jobs"
 	"github.com/tidemarq/tidemarq/internal/manifest"
 	"github.com/tidemarq/tidemarq/internal/mounts"
-	"github.com/tidemarq/tidemarq/internal/notifications"
 	"github.com/tidemarq/tidemarq/internal/versions"
 	"github.com/tidemarq/tidemarq/internal/watch"
 	"github.com/tidemarq/tidemarq/internal/ws"
@@ -80,16 +79,15 @@ func run(configPath string) error {
 	conflictsSvc := conflicts.New(database)
 	versionsSvc := versions.New(database, versionsDir, 30)
 	mountsSvc := mounts.New(database, cfg.Auth.JWTSecret)
-	notifSvc := notifications.New(database, cfg.Auth.JWTSecret)
 	auditSvc := audit.New(database)
-	jobsSvc := jobs.New(database, syncEngine, hub, watcher, versionsSvc, conflictsSvc, mountsSvc, auditSvc, notifSvc)
+	jobsSvc := jobs.New(database, syncEngine, hub, watcher, versionsSvc, conflictsSvc, mountsSvc, auditSvc)
 
 	if err := jobsSvc.Start(context.Background()); err != nil {
 		return fmt.Errorf("starting job service: %w", err)
 	}
 	defer jobsSvc.Stop()
 
-	srv := api.NewServer(cfg, database, authSvc, jobsSvc, hub, conflictsSvc, versionsSvc, mountsSvc, notifSvc, auditSvc)
+	srv := api.NewServer(cfg, database, authSvc, jobsSvc, hub, conflictsSvc, versionsSvc, mountsSvc, auditSvc)
 
 	log.Printf("tidemarq %s starting — https://localhost:%d", api.Version, cfg.Server.HTTPSPort)
 	return srv.Run()

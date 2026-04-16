@@ -1,16 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, Moon, Sun } from 'lucide-react'
+import { Moon, Sun } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listUsers, createUser, updateUser, deleteUser, getHealth,
-         listNotificationTargets, createNotificationTarget, deleteNotificationTarget,
-         listNotificationRules, createNotificationRule, deleteNotificationRule } from '../api/client'
+import { listUsers, createUser, updateUser, deleteUser, getHealth } from '../api/client'
 import { useAuth } from '../store/auth'
 import { Button } from '../components/Button'
 import { Modal } from '../components/Modal'
 import { useToast } from '../components/Toast'
-import type { User, NotificationTarget, NotificationRule } from '../api/types'
+import type { User } from '../api/types'
 
-type Tab = 'general' | 'users' | 'notifications' | 'about'
+type Tab = 'general' | 'users' | 'about'
 
 interface EditUserState {
   user: User
@@ -114,68 +112,6 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
     onError: () => toast('Failed to delete user.', 'err'),
   })
 
-  // ── Notifications state ──────────────────────────────────────────────────
-  const { data: notifTargets = [] } = useQuery({
-    queryKey: ['notif-targets'],
-    queryFn: listNotificationTargets,
-    enabled: tab === 'notifications' && me?.role === 'admin',
-  })
-  const { data: notifRules = [] } = useQuery({
-    queryKey: ['notif-rules'],
-    queryFn: () => listNotificationRules(),
-    enabled: tab === 'notifications' && me?.role === 'admin',
-  })
-
-  const [newTarget, setNewTarget] = useState({
-    name: '', type: 'webhook' as NotificationTarget['type'], enabled: true,
-    config: '{}',
-  })
-  const [newRule, setNewRule] = useState({
-    target_id: 0,
-    event: 'job_failed' as NotificationRule['event'],
-  })
-  const [delNotifTarget, setDelNotifTarget] = useState<NotificationTarget | null>(null)
-
-  const addTarget = useMutation({
-    mutationFn: () => {
-      let config: object
-      try { config = JSON.parse(newTarget.config) } catch { config = {} }
-      return createNotificationTarget({ name: newTarget.name, type: newTarget.type, enabled: newTarget.enabled, config })
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['notif-targets'] })
-      toast('Target created.', 'ok')
-      setNewTarget({ name: '', type: 'webhook', enabled: true, config: '{}' })
-    },
-    onError: () => toast('Failed to create target.', 'err'),
-  })
-
-  const delTarget2 = useMutation({
-    mutationFn: (id: number) => deleteNotificationTarget(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['notif-targets'] })
-      qc.invalidateQueries({ queryKey: ['notif-rules'] })
-      toast('Target deleted.', 'ok')
-      setDelNotifTarget(null)
-    },
-    onError: () => toast('Failed to delete target.', 'err'),
-  })
-
-  const addRule = useMutation({
-    mutationFn: () => createNotificationRule({ target_id: newRule.target_id, event: newRule.event }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['notif-rules'] })
-      toast('Rule created.', 'ok')
-    },
-    onError: () => toast('Failed to create rule.', 'err'),
-  })
-
-  const delRule = useMutation({
-    mutationFn: (id: number) => deleteNotificationRule(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['notif-rules'] }) },
-    onError: () => toast('Failed to delete rule.', 'err'),
-  })
-
   return (
     <div>
       <div className="page-hd">
@@ -185,7 +121,7 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
       {showBanner && <FirstRunBanner onDismiss={dismissBanner} />}
 
       <div className="stabs">
-        {(['general', 'users', 'notifications', 'about'] as Tab[]).map(t => (
+        {(['general', 'users', 'about'] as Tab[]).map(t => (
           <div key={t} className={`stab${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </div>
@@ -325,138 +261,6 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* ── Notifications ────────────────────────────────── */}
-      {tab === 'notifications' && me?.role === 'admin' && (
-        <div>
-          <div className="ssec">
-            <div className="ssec-title">Notification Targets</div>
-            {notifTargets.length > 0 && (
-              <div className="tbl-wrap" style={{ marginBottom: 16 }}>
-                <table>
-                  <thead><tr><th>Name</th><th>Type</th><th>Enabled</th><th></th></tr></thead>
-                  <tbody>
-                    {notifTargets.map(t => (
-                      <tr key={t.id}>
-                        <td className="fw5">{t.name}</td>
-                        <td><span className="badge b-tag">{t.type}</span></td>
-                        <td>{t.enabled ? 'Yes' : 'No'}</td>
-                        <td>
-                          <Button variant="ghost" size="sm" onClick={() => setDelNotifTarget(t)}>
-                            <Trash2 size={12}/>
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <div className="card-title mb12" style={{ fontSize: 13 }}>Add target</div>
-            <div className="grid3" style={{ gap: 12 }}>
-              <div className="fg" style={{ marginBottom: 0 }}>
-                <label className="fl">Name</label>
-                <input className="fi" value={newTarget.name} onChange={e => setNewTarget(t => ({ ...t, name: e.target.value }))} />
-              </div>
-              <div className="fg" style={{ marginBottom: 0 }}>
-                <label className="fl">Type</label>
-                <select className="fs" value={newTarget.type} onChange={e => setNewTarget(t => ({ ...t, type: e.target.value as NotificationTarget['type'] }))}>
-                  <option value="webhook">Webhook</option>
-                </select>
-              </div>
-              <div className="fg" style={{ marginBottom: 0 }}>
-                <label className="fl">Enabled</label>
-                <select className="fs" value={newTarget.enabled ? '1' : '0'} onChange={e => setNewTarget(t => ({ ...t, enabled: e.target.value === '1' }))}>
-                  <option value="1">Yes</option>
-                  <option value="0">No</option>
-                </select>
-              </div>
-            </div>
-            <div className="fg" style={{ marginBottom: 0, marginTop: 12 }}>
-              <label className="fl">Config (JSON)</label>
-              <textarea
-                className="fi mono"
-                style={{ fontSize: 12, resize: 'vertical', minHeight: 80 }}
-                value={newTarget.config}
-                onChange={e => setNewTarget(t => ({ ...t, config: e.target.value }))}
-                placeholder='{"url":"https://hooks.example.com/...","method":"POST","headers":{"Authorization":"Bearer ..."}}'
-              />
-            </div>
-            <div style={{ marginTop: 12 }}>
-              <Button variant="primary" disabled={addTarget.isPending || !newTarget.name}
-                onClick={() => addTarget.mutate()}>
-                <Plus size={13}/> {addTarget.isPending ? 'Creating…' : 'Add target'}
-              </Button>
-            </div>
-          </div>
-
-          {notifTargets.length > 0 && (
-            <div className="ssec">
-              <div className="ssec-title">Notification Rules</div>
-              {notifRules.length > 0 && (
-                <div className="tbl-wrap" style={{ marginBottom: 16 }}>
-                  <table>
-                    <thead><tr><th>Target</th><th>Event</th><th></th></tr></thead>
-                    <tbody>
-                      {notifRules.map(r => (
-                        <tr key={r.id}>
-                          <td>{notifTargets.find(t => t.id === r.target_id)?.name ?? r.target_id}</td>
-                          <td><span className="badge b-tag">{r.event.replace(/_/g, ' ')}</span></td>
-                          <td>
-                            <Button variant="ghost" size="sm" onClick={() => delRule.mutate(r.id)}>
-                              <Trash2 size={12}/>
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                <div className="fg" style={{ marginBottom: 0 }}>
-                  <label className="fl">Target</label>
-                  <select className="fs" value={newRule.target_id}
-                    onChange={e => setNewRule(r => ({ ...r, target_id: Number(e.target.value) }))}>
-                    <option value={0}>— select —</option>
-                    {notifTargets.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
-                </div>
-                <div className="fg" style={{ marginBottom: 0 }}>
-                  <label className="fl">Event</label>
-                  <select className="fs" value={newRule.event}
-                    onChange={e => setNewRule(r => ({ ...r, event: e.target.value as NotificationRule['event'] }))}>
-                    <option value="job_failed">Job failed</option>
-                    <option value="job_completed">Job completed</option>
-                    <option value="job_started">Job started</option>
-                    <option value="conflict_detected">Conflict detected</option>
-                  </select>
-                </div>
-                <Button variant="primary" disabled={addRule.isPending || !newRule.target_id}
-                  onClick={() => addRule.mutate()}>
-                  <Plus size={13}/> {addRule.isPending ? 'Adding…' : 'Add rule'}
-                </Button>
-              </div>
-            </div>
-          )}
-
-          <Modal
-            open={!!delNotifTarget}
-            title="Delete notification target?"
-            body={`This will permanently remove "${delNotifTarget?.name}" and all its rules.`}
-            confirmLabel="Delete"
-            confirmVariant="danger"
-            onConfirm={() => delNotifTarget && delTarget2.mutate(delNotifTarget.id)}
-            onClose={() => setDelNotifTarget(null)}
-          />
-        </div>
-      )}
-
-      {tab === 'notifications' && me?.role !== 'admin' && (
-        <div className="ssec">
-          <div className="text3" style={{ fontSize: 13 }}>Notification settings are only available to admins.</div>
         </div>
       )}
 

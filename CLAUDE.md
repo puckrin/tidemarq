@@ -53,7 +53,6 @@ tidemarq/
 │       ├── manifest/          # File manifest read/write
 │       ├── mountfs/           # SMB and SFTP filesystem implementations
 │       ├── mounts/            # Mount config management, credential encryption
-│       ├── notifications/     # SMTP, webhook, Gotify notification dispatch
 │       ├── watch/             # Filesystem event watching
 │       ├── conflicts/         # Conflict detection and resolution
 │       ├── versions/          # Version history, soft delete, quarantine
@@ -127,7 +126,7 @@ The backend serves the built frontend from `frontend/dist/` in production. In de
 - Passwords are always bcrypt-hashed. Never log or store plaintext credentials.
 - Network mount credentials (SMB username/password, SSH keys) are stored encrypted at rest using AES-256-GCM (`internal/crypt`).
 - The JWT signing secret is auto-generated on first start and persisted to `<data_dir>/.jwt_secret`. It can be overridden via config or `TIDEMARQ_AUTH_JWT_SECRET`.
-- No telemetry, no outbound connections except to configured mount targets and notification endpoints.
+- No telemetry, no outbound connections except to configured mount targets.
 
 **Configuration**
 - Config is loaded once at startup from `tidemarq.yaml` and environment variables. Env vars override the file.
@@ -229,13 +228,11 @@ The following describes the current implemented state of the application. Use th
 
 ---
 
-### Phase 6 — Mounts & notifications ✓
+### Phase 6 — Mounts & audit ✓
 
 - Named SMB mounts: configurable, connectivity-testable, usable as job source or destination
 - Named SFTP mounts: password or SSH key auth; usable as job source or destination
 - Mount credentials encrypted at rest with AES-256-GCM (`internal/crypt`)
-- Notification targets: SMTP, webhook (HTTP POST/PUT with custom headers), Gotify
-- Notification rules map events (`job_failed`, `conflict_detected`, etc.) to one or more targets
 - Audit log searchable and filterable by job, event type, and date range via `/api/v1/audit`
 - Audit log export as CSV and JSON
 

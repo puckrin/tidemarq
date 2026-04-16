@@ -1,4 +1,4 @@
-import type { Job, Conflict, FileVersion, QuarantineEntry, User, HealthResponse, Mount, MountInput, NotificationTarget, NotificationRule, AuditEntry, BrowseResponse } from './types'
+import type { Job, Conflict, FileVersion, QuarantineEntry, User, HealthResponse, Mount, MountInput, AuditEntry, BrowseResponse } from './types'
 
 const BASE = '/api/v1'
 
@@ -109,22 +109,6 @@ export const deleteMount = (id: number) =>
   request<void>(`${BASE}/mounts/${id}`, { method: 'DELETE' })
 export const testMount = (id: number) =>
   request<{ ok: boolean; error?: string }>(`${BASE}/mounts/${id}/test`, { method: 'POST' })
-
-// Notifications
-export const listNotificationTargets = () =>
-  request<NotificationTarget[]>(`${BASE}/notifications/targets`)
-export const createNotificationTarget = (data: object) =>
-  request<NotificationTarget>(`${BASE}/notifications/targets`, { method: 'POST', body: JSON.stringify(data) })
-export const updateNotificationTarget = (id: number, data: object) =>
-  request<NotificationTarget>(`${BASE}/notifications/targets/${id}`, { method: 'PUT', body: JSON.stringify(data) })
-export const deleteNotificationTarget = (id: number) =>
-  request<void>(`${BASE}/notifications/targets/${id}`, { method: 'DELETE' })
-export const listNotificationRules = (targetId?: number) =>
-  request<NotificationRule[]>(`${BASE}/notifications/rules${targetId ? `?target_id=${targetId}` : ''}`)
-export const createNotificationRule = (data: object) =>
-  request<NotificationRule>(`${BASE}/notifications/rules`, { method: 'POST', body: JSON.stringify(data) })
-export const deleteNotificationRule = (id: number) =>
-  request<void>(`${BASE}/notifications/rules/${id}`, { method: 'DELETE' })
 
 // Audit log
 export const listAuditLog = (params?: { job_id?: number; event?: string; limit?: number; offset?: number }) => {

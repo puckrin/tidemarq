@@ -25,7 +25,6 @@ import (
 	"github.com/tidemarq/tidemarq/internal/db"
 	"github.com/tidemarq/tidemarq/internal/jobs"
 	"github.com/tidemarq/tidemarq/internal/mounts"
-	"github.com/tidemarq/tidemarq/internal/notifications"
 	"github.com/tidemarq/tidemarq/internal/versions"
 	"github.com/tidemarq/tidemarq/internal/ws"
 )
@@ -40,7 +39,6 @@ type Server struct {
 	conflictsSvc *conflicts.Service
 	versionsSvc  *versions.Service
 	mountsSvc    *mounts.Service
-	notifSvc     *notifications.Service
 	auditSvc     *audit.Service
 	startTime    time.Time
 }
@@ -55,7 +53,6 @@ func NewServer(
 	conflictsSvc *conflicts.Service,
 	versionsSvc *versions.Service,
 	mountsSvc *mounts.Service,
-	notifSvc *notifications.Service,
 	auditSvc *audit.Service,
 ) *Server {
 	return &Server{
@@ -67,7 +64,6 @@ func NewServer(
 		conflictsSvc: conflictsSvc,
 		versionsSvc:  versionsSvc,
 		mountsSvc:    mountsSvc,
-		notifSvc:     notifSvc,
 		auditSvc:     auditSvc,
 		startTime:    time.Now(),
 	}

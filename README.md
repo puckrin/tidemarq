@@ -24,8 +24,6 @@ tidemarq lets you define sync jobs between directories — local folders, networ
 
 **Mounts** let you configure named SMB and SFTP connections once and reuse them across jobs. Credentials are encrypted at rest.
 
-**Notifications** send alerts (email, webhook, Gotify) when jobs fail, conflicts are detected, or quarantine entries are about to expire.
-
 ---
 
 ## How tidemarq transfers files
