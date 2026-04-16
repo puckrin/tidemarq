@@ -4,6 +4,30 @@ A self-hosted directory synchronisation tool with a browser-based UI. Runs as a 
 
 ---
 
+## What tidemarq does
+
+tidemarq lets you define sync jobs between directories — local folders, network shares (SMB/CIFS), or SFTP servers — and manage them from a browser.
+
+**Sync jobs** are the core concept. Each job has a source, a destination, a mode, and a schedule:
+
+- **One-way backup** — copies new and changed files from source to destination. Files deleted from the source are left in place at the destination.
+- **One-way mirror** — keeps the destination an exact mirror of the source. Files removed from the source are soft-deleted (moved to quarantine, not permanently deleted).
+- **Two-way sync** — propagates changes in both directions. Files changed on both sides since the last sync are flagged as conflicts for manual review.
+
+**Scheduling** is flexible: jobs can run on a cron schedule, trigger automatically when the source directory changes (filesystem watch), or be kicked off manually from the UI.
+
+**Conflict management** is built in. When two-way sync detects a file changed on both sides, it queues a conflict for you to resolve — keep the source version, keep the destination version, or keep both. Auto-resolution strategies (newest wins, largest wins, source wins, destination wins) are also available per job.
+
+**Quarantine** replaces permanent deletion. When a mirror or two-way job would delete a file, it moves it to a quarantine store with a configurable retention period. Quarantined files can be restored or permanently removed from the UI.
+
+**Audit log** records every job run, file operation, conflict, and user action with timestamps, so you always have a record of what changed and when.
+
+**Mounts** let you configure named SMB and SFTP connections once and reuse them across jobs. Credentials are encrypted at rest.
+
+**Notifications** send alerts (email, webhook, Gotify) when jobs fail, conflicts are detected, or quarantine entries are about to expire.
+
+---
+
 ## How tidemarq transfers files
 
 **Tools like rsync** use an efficient delta algorithm — only changed bytes travel the wire. But they require their own software running on both machines. Sync to an SFTP server or a shared SMB volume and you need rsync installed on the remote too.
