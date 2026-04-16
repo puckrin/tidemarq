@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Check, ArrowLeft, ArrowRight } from 'lucide-react'
+import { Check, ArrowLeft, ArrowRight, ChevronDown } from 'lucide-react'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { createJob, updateJob, getJob, listMounts } from '../api/client'
 import { Button } from '../components/Button'
@@ -26,6 +26,8 @@ interface FormState {
   cron_schedule: string
   bandwidth_limit_kb: number
   full_checksum: boolean
+  hash_algo: 'sha256' | 'blake3'
+  use_delta: boolean
 }
 
 const INIT: FormState = {
@@ -38,6 +40,8 @@ const INIT: FormState = {
   cron_schedule: '',
   bandwidth_limit_kb: 0,
   full_checksum: false,
+  hash_algo: 'blake3',
+  use_delta: false,
 }
 
 function jobToForm(j: Job): FormState {
@@ -51,6 +55,8 @@ function jobToForm(j: Job): FormState {
     cron_schedule:      j.cron_schedule ?? '',
     bandwidth_limit_kb: j.bandwidth_limit_kb,
     full_checksum:      j.full_checksum,
+    hash_algo:          (j.hash_algo ?? 'blake3') as 'sha256' | 'blake3',
+    use_delta:          j.use_delta ?? false,
   }
 }
 
@@ -80,7 +86,7 @@ const STRATEGY_OPTIONS: { value: Job['conflict_strategy']; label: string }[] = [
 function StepIndicator({ step, current }: { step: number; current: Step }) {
   const done   = step < current
   const active = step === current
-  const labels = ['Source & Name', 'Destination', 'Mode', 'Schedule & Bandwidth', 'Review']
+  const labels = ['Source & Name', 'Destination', 'Mode', 'Schedule & Transfer', 'Review']
   return (
     <div className={`step${active ? ' active' : done ? ' done' : ''}`}>
       <div className="step-num">{done ? <Check size={12}/> : step}</div>
@@ -94,9 +100,10 @@ export function NewJobView({ onNav, editJobId }: Props) {
   const toast = useToast()
   const isEdit = editJobId != null
 
-  const [step, setStep]       = useState<Step>(1)
-  const [form, setForm]       = useState<FormState>(INIT)
-  const [ready, setReady]     = useState(!isEdit)   // false until existing job loaded
+  const [step, setStep]         = useState<Step>(1)
+  const [form, setForm]         = useState<FormState>(INIT)
+  const [ready, setReady]       = useState(!isEdit)   // false until existing job loaded
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   // Mounts list for name lookup in labels
   const { data: mounts = [] } = useQuery({
@@ -138,6 +145,8 @@ export function NewJobView({ onNav, editJobId }: Props) {
         cron_schedule:      form.cron_schedule,
         bandwidth_limit_kb: form.bandwidth_limit_kb,
         full_checksum:      form.full_checksum,
+        hash_algo:          form.hash_algo,
+        use_delta:          form.use_delta,
       }
       return isEdit ? updateJob(editJobId!, payload) : createJob(payload)
     },
@@ -212,8 +221,9 @@ export function NewJobView({ onNav, editJobId }: Props) {
           <div className="card mb16">
             <div className="card-title mb16">Step 1 — Name &amp; Source</div>
             <div className="fg">
-              <label className="fl">Job name</label>
+              <label htmlFor="nj-name" className="fl">Job name</label>
               <input
+                id="nj-name"
                 className="fi"
                 placeholder="e.g. Documents → NAS Backup"
                 value={form.name}
@@ -302,10 +312,10 @@ export function NewJobView({ onNav, editJobId }: Props) {
           </div>
         )}
 
-        {/* Step 4 — Schedule & Bandwidth */}
+        {/* Step 4 — Schedule & Transfer */}
         {step === 4 && (
           <div className="card mb16">
-            <div className="card-title mb16">Step 4 — Schedule &amp; Bandwidth</div>
+            <div className="card-title mb16">Step 4 — Schedule &amp; Transfer</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               {(() => {
                 const watchDisabled = form.mode === 'two-way' &&
@@ -356,33 +366,79 @@ export function NewJobView({ onNav, editJobId }: Props) {
                   onChange={e => set({ bandwidth_limit_kb: Number(e.target.value) })}
                 />
               </div>
-              <div className="flex gap12" style={{ alignItems: 'flex-start' }}>
-                <label className="toggle" style={{ marginTop: 3 }}>
-                  <input
-                    type="checkbox"
-                    checked={form.full_checksum}
-                    onChange={e => set({ full_checksum: e.target.checked })}
-                  />
-                  <span className="tog-sl"/>
-                </label>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>Full SHA-256 verification</div>
-                  <div className="fs12 text2" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <span>
-                      By default, repeat runs are fast: unchanged files are detected by comparing size
-                      and modification time and are skipped without reading their contents.
-                      {' '}<strong>The first run always reads and copies everything</strong>{' '}
-                      to build a baseline — the speed benefit applies to subsequent runs only.
-                    </span>
-                    <span>
-                      Enable this if your source filesystem has unreliable timestamps (some SMB shares,
-                      FAT32 volumes). When on, every source file is read and hashed on every run regardless
-                      of whether it appears unchanged —
-                      <span style={{ color: 'var(--coral-light)', fontWeight: 500 }}> every run will be as slow as the first.</span>
-                    </span>
+              {/* Advanced settings */}
+              <div
+                onClick={() => setShowAdvanced(v => !v)}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none', fontSize: 13, color: 'var(--text2)', paddingTop: 4 }}
+              >
+                <ChevronDown size={14} style={{ transform: showAdvanced ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.15s', flexShrink: 0 }} />
+                <span>Advanced settings</span>
+              </div>
+              {showAdvanced && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, borderLeft: '2px solid var(--border)', paddingLeft: 16 }}>
+                  <div className="fg" style={{ marginBottom: 0 }}>
+                    <label className="fl">Hash algorithm</label>
+                    <select
+                      className="fs"
+                      style={{ maxWidth: 260 }}
+                      value={form.hash_algo}
+                      onChange={e => set({ hash_algo: e.target.value as 'sha256' | 'blake3' })}
+                    >
+                      <option value="blake3">BLAKE3 (recommended)</option>
+                      <option value="sha256">SHA-256 (auditing &amp; compliance)</option>
+                    </select>
+                    <div className="fhint">
+                      Algorithm used to verify file integrity after each transfer and detect changes between runs.
+                      BLAKE3 is significantly faster than SHA-256 with equivalent security.
+                    </div>
+                  </div>
+                  <div className="flex gap12" style={{ alignItems: 'flex-start' }}>
+                    <label className="toggle" style={{ marginTop: 3 }}>
+                      <input
+                        type="checkbox"
+                        checked={form.full_checksum}
+                        onChange={e => set({ full_checksum: e.target.checked })}
+                      />
+                      <span className="tog-sl"/>
+                    </label>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>Full content verification on every run</div>
+                      <div className="fs12 text2" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <span>
+                          By default, repeat runs are fast: unchanged files are detected by comparing size
+                          and modification time and are skipped without reading their contents.
+                          {' '}<strong>The first run always reads and copies everything</strong>{' '}
+                          to build a baseline — the speed benefit applies to subsequent runs only.
+                        </span>
+                        <span>
+                          Enable this if your source filesystem has unreliable timestamps (some SMB shares,
+                          FAT32 volumes). When on, every source file is read and hashed on every run regardless
+                          of whether it appears unchanged —
+                          <span style={{ color: 'var(--coral-light)', fontWeight: 500 }}> every run will be as slow as the first.</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap12" style={{ alignItems: 'flex-start' }}>
+                    <label className="toggle" style={{ marginTop: 3 }}>
+                      <input
+                        type="checkbox"
+                        checked={form.use_delta}
+                        onChange={e => set({ use_delta: e.target.checked })}
+                      />
+                      <span className="tog-sl"/>
+                    </label>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>Delta transfer</div>
+                      <div className="fs12 text2">
+                        For large files with small changes, only the modified regions are transferred.
+                        Uses a rolling checksum (Adler-32) to identify unchanged blocks.
+                        Applied to local-to-local transfers only. Files smaller than 64 KB are always copied in full.
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         )}
@@ -410,7 +466,9 @@ export function NewJobView({ onNav, editJobId }: Props) {
                 ['FS watch',         effectiveWatch ? 'Enabled' : watchDisabled ? 'Disabled (network mount)' : 'Disabled'],
                 ['Cron schedule',    form.cron_schedule || 'None'],
                 ['Bandwidth limit',  form.bandwidth_limit_kb > 0 ? `${form.bandwidth_limit_kb} KB/s` : 'Unlimited'],
-                ['Full SHA-256',     form.full_checksum ? 'Yes (slower, reads every file)' : 'No (metadata fast-path)'],
+                ['Hash algorithm',   form.hash_algo === 'blake3' ? 'BLAKE3' : 'SHA-256'],
+                ['Full verification', form.full_checksum ? 'Yes (slower, reads every file)' : 'No (metadata fast-path)'],
+                ['Delta transfer',   form.use_delta ? 'Enabled' : 'Disabled'],
               ] as [string, React.ReactNode][]).map(([label, val]) => (
                 <div key={label} className="flex gap8">
                   <span className="text3 fw5" style={{ minWidth: 160 }}>{label}</span>

@@ -3,8 +3,6 @@ package versions
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tidemarq/tidemarq/internal/db"
+	"github.com/tidemarq/tidemarq/internal/hasher"
 )
 
 // ErrNotFound is returned when a version or quarantine record does not exist.
@@ -47,7 +46,8 @@ func New(database *db.DB, versionsDir string, retentionDays int) *Service {
 
 // Snapshot saves the current state of destPath as a new version before it is overwritten.
 // relPath is the job-relative path; jobID identifies the owning job.
-func (s *Service) Snapshot(ctx context.Context, jobID int64, relPath, destPath string) (*db.FileVersion, error) {
+// algo is the hash algorithm to use (e.g. "sha256", "blake3").
+func (s *Service) Snapshot(ctx context.Context, jobID int64, relPath, destPath, algo string) (*db.FileVersion, error) {
 	info, err := os.Stat(destPath)
 	if os.IsNotExist(err) {
 		return nil, nil // nothing to snapshot
@@ -56,7 +56,7 @@ func (s *Service) Snapshot(ctx context.Context, jobID int64, relPath, destPath s
 		return nil, err
 	}
 
-	hash, err := hashFile(destPath)
+	hash, err := hasher.HashFile(algo, destPath)
 	if err != nil {
 		return nil, err
 	}
@@ -76,12 +76,13 @@ func (s *Service) Snapshot(ctx context.Context, jobID int64, relPath, destPath s
 	}
 
 	return s.db.CreateFileVersion(ctx, &db.FileVersion{
-		JobID:      jobID,
-		RelPath:    relPath,
-		StoredPath: storedPath,
-		SHA256:     hash,
-		SizeBytes:  info.Size(),
-		ModTime:    info.ModTime(),
+		JobID:       jobID,
+		RelPath:     relPath,
+		StoredPath:  storedPath,
+		ContentHash: hash,
+		HashAlgo:    algo,
+		SizeBytes:   info.Size(),
+		ModTime:     info.ModTime(),
 	})
 }
 
@@ -117,7 +118,8 @@ func (s *Service) RestoreVersion(ctx context.Context, id int64, destBasePath str
 // folder (<destRoot>/.tidemarq-quarantine/<relPath>/<unix_nano>) and records it in
 // the DB. Keeping the quarantine inside the destination means the rename is always
 // on the same filesystem, avoiding a full copy across volumes.
-func (s *Service) Quarantine(ctx context.Context, jobID int64, relPath, destPath, destRoot string) (*db.QuarantineEntry, error) {
+// algo is the hash algorithm to use (e.g. "sha256", "blake3").
+func (s *Service) Quarantine(ctx context.Context, jobID int64, relPath, destPath, destRoot, algo string) (*db.QuarantineEntry, error) {
 	info, err := os.Stat(destPath)
 	if os.IsNotExist(err) {
 		return nil, nil // file already gone
@@ -126,7 +128,7 @@ func (s *Service) Quarantine(ctx context.Context, jobID int64, relPath, destPath
 		return nil, err
 	}
 
-	hash, err := hashFile(destPath)
+	hash, err := hasher.HashFile(algo, destPath)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +162,8 @@ func (s *Service) Quarantine(ctx context.Context, jobID int64, relPath, destPath
 		JobID:          jobID,
 		RelPath:        relPath,
 		QuarantinePath: quarantinePath,
-		SHA256:         hash,
+		ContentHash:    hash,
+		HashAlgo:       algo,
 		SizeBytes:      info.Size(),
 		DeletedAt:      now,
 		ExpiresAt:      now.AddDate(0, 0, s.retentionDays),
@@ -268,20 +271,6 @@ func pruneEmptyDirs(dir, root string) {
 		}
 		dir = filepath.Dir(dir)
 	}
-}
-
-// hashFile computes SHA-256 of the file at path.
-func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // copyFile copies src to dst atomically via a temp file.

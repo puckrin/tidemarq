@@ -3,10 +3,10 @@ package engine
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/tidemarq/tidemarq/internal/conflicts"
+	"github.com/tidemarq/tidemarq/internal/delta"
+	"github.com/tidemarq/tidemarq/internal/hasher"
 	"github.com/tidemarq/tidemarq/internal/manifest"
 	"github.com/tidemarq/tidemarq/internal/mountfs"
 	"github.com/tidemarq/tidemarq/internal/versions"
@@ -37,12 +39,30 @@ type Config struct {
 	DestFS           mountfs.MountFS
 	BandwidthLimitKB int64            // 0 = unlimited
 	Workers          int              // 0 = defaultWorkers
-	// FullChecksum forces SHA-256 hashing of the source before every copy decision,
+	// HashAlgo selects the file integrity hash algorithm: "sha256" (default) or "blake3".
+	// An empty string defaults to "sha256" for backward compatibility.
+	HashAlgo         string
+	// FullChecksum forces full file hashing of the source before every copy decision,
 	// regardless of whether the file metadata matches the manifest.
 	// Default (false) uses a metadata fast-path: if size and mtime match the manifest
 	// entry, the file is skipped without reading its contents, and copies use a single
 	// streaming pass that computes hashes inline. Recommended for large or network sources.
 	FullChecksum     bool
+	// UseDelta enables rolling-checksum delta transfer for local filesystem paths.
+	// When true and an existing destination file is found, the engine computes an
+	// Adler-32/BLAKE3 block signature of the destination, diffs the source against it,
+	// and transfers only changed regions. Falls back to a full copy if the delta offers
+	// no benefit (>= 90 % literals) or if the destination does not yet exist.
+	// Has no effect for remote mount destinations.
+	UseDelta         bool
+	// DeltaBlockSize is the fixed block size (bytes) used for delta signature computation.
+	// 0 uses the default of 2048 bytes. Larger values reduce memory use for the signature
+	// but coarsen the change granularity.
+	DeltaBlockSize   int
+	// DeltaMinBytes is the minimum source file size (bytes) before delta transfer is
+	// attempted. Files smaller than this are always copied in full. 0 uses a default of
+	// 65536 bytes.
+	DeltaMinBytes    int64
 	OnProgress       func(Progress)   // called after each file is processed; may be nil
 	// OnFileStart is called immediately before a file begins evaluation (before any
 	// hashing or copy decision). It is rate-limited by the caller. May be nil.
@@ -285,7 +305,7 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 		localDst, isLocal := dstFS.(*mountfs.LocalFS)
 		if isLocal && cfg.VersionsSvc != nil {
 			destPath := filepath.Join(localDst.Root(), filepath.FromSlash(destFi.RelPath))
-			if _, err := cfg.VersionsSvc.Quarantine(ctx, cfg.JobID, destFi.RelPath, destPath, localDst.Root()); err != nil {
+			if _, err := cfg.VersionsSvc.Quarantine(ctx, cfg.JobID, destFi.RelPath, destPath, localDst.Root(), effectiveAlgo(cfg)); err != nil {
 				result.Errors = append(result.Errors, FileError{Path: destFi.RelPath, Err: fmt.Errorf("quarantine: %w", err)})
 			} else {
 				result.Quarantined++
@@ -350,6 +370,8 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 	var bytesDone int64
 	rt := &rateTracker{start: time.Now()}
 
+	algo := effectiveAlgo(cfg)
+
 	// --- Source files ---
 	for _, srcFi := range srcFiles {
 		if paused, ctxErr := checkPause(ctx, cfg.PauseCh); paused {
@@ -362,7 +384,7 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 		srcPath := filepath.Join(cfg.SourcePath, filepath.FromSlash(srcFi.RelPath))
 		destPath := filepath.Join(cfg.DestinationPath, filepath.FromSlash(srcFi.RelPath))
 
-		srcState, err := conflicts.StatFile(srcPath)
+		srcState, err := conflicts.StatFile(srcPath, algo)
 		if err != nil {
 			result.Errors = append(result.Errors, FileError{Path: srcFi.RelPath, Err: err})
 			done++
@@ -376,7 +398,7 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 			continue
 		}
 
-		destState, err := conflicts.StatFile(destPath)
+		destState, err := conflicts.StatFile(destPath, algo)
 		if err != nil {
 			result.Errors = append(result.Errors, FileError{Path: srcFi.RelPath, Err: err})
 			done++
@@ -385,9 +407,9 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 
 		if entry == nil {
 			// File is new on source side.
-			if !destState.Exists || destState.SHA256 == srcState.SHA256 {
+			if !destState.Exists || destState.ContentHash == srcState.ContentHash {
 				// Dest doesn't have it or already matches — copy src→dest.
-				written, ferr := e.transferFile(ctx, cfg, srcPath, destPath, srcFi, srcState.SHA256)
+				written, ferr := e.transferFile(ctx, cfg, srcPath, destPath, srcFi, srcState.ContentHash)
 				if errors.Is(ferr, errMidFilePause) {
 					result.Paused = true
 					return result, nil
@@ -412,7 +434,7 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 			}
 		} else {
 			// File has sync history.
-			isConflict, srcChanged, destChanged := conflicts.Detect(entry.SHA256, srcState, destState)
+			isConflict, srcChanged, destChanged := conflicts.Detect(entry.ContentHash, srcState, destState)
 
 			switch {
 			case isConflict:
@@ -427,14 +449,15 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 				}
 
 			case srcChanged && destChanged:
-				// Both sides changed but Detect confirmed they are identical (same SHA256).
+				// Both sides changed but Detect confirmed they are identical (same content hash).
 				// This happens after conflict resolution: the winning version is on both sides
 				// but the manifest still holds the pre-conflict hash.  Update the manifest so
 				// subsequent runs see this file as in sync without re-detecting a conflict.
 				_ = e.manifest.Put(ctx, &manifest.Entry{
 					JobID:       cfg.JobID,
 					RelPath:     srcFi.RelPath,
-					SHA256:      srcState.SHA256,
+					ContentHash: srcState.ContentHash,
+					HashAlgo:    algo,
 					SizeBytes:   srcState.Size,
 					ModTime:     srcState.ModTime,
 					Permissions: srcFi.Permissions,
@@ -445,9 +468,9 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 			case srcChanged && !destChanged:
 				// Source updated — copy src→dest.
 				if cfg.VersionsSvc != nil && destState.Exists {
-					_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, srcFi.RelPath, destPath)
+					_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, srcFi.RelPath, destPath, algo)
 				}
-				written, ferr := e.transferFile(ctx, cfg, srcPath, destPath, srcFi, srcState.SHA256)
+				written, ferr := e.transferFile(ctx, cfg, srcPath, destPath, srcFi, srcState.ContentHash)
 				if errors.Is(ferr, errMidFilePause) {
 					result.Paused = true
 					return result, nil
@@ -462,9 +485,9 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 			case !srcChanged && destChanged:
 				// Dest updated — copy dest→src.
 				if cfg.VersionsSvc != nil {
-					_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, srcFi.RelPath, srcPath)
+					_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, srcFi.RelPath, srcPath, algo)
 				}
-				written, ferr := e.transferFile(ctx, cfg, destPath, srcPath, srcFi, destState.SHA256)
+				written, ferr := e.transferFile(ctx, cfg, destPath, srcPath, srcFi, destState.ContentHash)
 				if errors.Is(ferr, errMidFilePause) {
 					result.Paused = true
 					return result, nil
@@ -519,8 +542,8 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 
 		if entry == nil {
 			// Genuinely new file on dest — copy dest→src.
-			destState, _ := conflicts.StatFile(destPath)
-			written, ferr := e.transferFile(ctx, cfg, destPath, srcPath, destFi, destState.SHA256)
+			destState, _ := conflicts.StatFile(destPath, algo)
+			written, ferr := e.transferFile(ctx, cfg, destPath, srcPath, destFi, destState.ContentHash)
 			if errors.Is(ferr, errMidFilePause) {
 				result.Paused = true
 				return result, nil
@@ -539,7 +562,7 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 				continue
 			}
 			if cfg.VersionsSvc != nil {
-				if _, err := cfg.VersionsSvc.Quarantine(ctx, cfg.JobID, destFi.RelPath, destPath, cfg.DestinationPath); err != nil {
+				if _, err := cfg.VersionsSvc.Quarantine(ctx, cfg.JobID, destFi.RelPath, destPath, cfg.DestinationPath, algo); err != nil {
 					result.Errors = append(result.Errors, FileError{Path: destFi.RelPath, Err: fmt.Errorf("quarantine: %w", err)})
 				} else {
 					result.Quarantined++
@@ -572,9 +595,11 @@ func (e *Engine) handleTwoWayConflict(
 ) (int64, error) {
 	result.Conflicts++
 
+	algo := effectiveAlgo(cfg)
+
 	// Snapshot before auto-resolve overwrites anything.
 	if cfg.VersionsSvc != nil && destState.Exists {
-		_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, relPath, destPath)
+		_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, relPath, destPath, algo)
 	}
 
 	// For ask-user: AutoResolve renames dest with .conflict suffix and returns both
@@ -597,10 +622,10 @@ func (e *Engine) handleTwoWayConflict(
 
 	// Determine source FileInfo for metadata preservation.
 	fi := FileInfo{RelPath: relPath, ModTime: srcState.ModTime}
-	srcHash := srcState.SHA256
+	srcHash := srcState.ContentHash
 	if winnerPath == destPath {
 		fi.ModTime = destState.ModTime
-		srcHash = destState.SHA256
+		srcHash = destState.ContentHash
 	}
 	if info, err := os.Stat(winnerPath); err == nil {
 		fi.Permissions = info.Mode().Perm()
@@ -626,7 +651,7 @@ func resolveFS(cfg Config) (srcFS, dstFS mountfs.MountFS) {
 }
 
 // transferFileFS copies srcRelPath from srcFS to dstRelPath on dstFS,
-// verifies SHA-256 integrity, updates the manifest, and preserves metadata.
+// verifies integrity, updates the manifest, and preserves metadata.
 func (e *Engine) transferFileFS(ctx context.Context, cfg Config, srcFS, dstFS mountfs.MountFS, fi FileInfo, syncedHash string) (int64, error) {
 	if cfg.OnFileCopyStart != nil {
 		cfg.OnFileCopyStart(fi.RelPath)
@@ -649,7 +674,8 @@ func (e *Engine) transferFileFS(ctx context.Context, cfg Config, srcFS, dstFS mo
 		return 0, errMidFilePause
 	}
 
-	destHash, err := hashFSFile(dstFS, fi.RelPath)
+	algo := effectiveAlgo(cfg)
+	destHash, err := hashFSFile(dstFS, fi.RelPath, algo)
 	if err != nil {
 		return 0, fmt.Errorf("hashing destination: %w", err)
 	}
@@ -665,7 +691,8 @@ func (e *Engine) transferFileFS(ctx context.Context, cfg Config, srcFS, dstFS mo
 	if err := e.manifest.Put(ctx, &manifest.Entry{
 		JobID:       cfg.JobID,
 		RelPath:     fi.RelPath,
-		SHA256:      syncedHash,
+		ContentHash: syncedHash,
+		HashAlgo:    algo,
 		SizeBytes:   written,
 		ModTime:     fi.ModTime,
 		Permissions: fi.Permissions,
@@ -686,16 +713,26 @@ func (e *Engine) transferFile(ctx context.Context, cfg Config, srcAbsPath, dstAb
 		return 0, fmt.Errorf("mkdir: %w", err)
 	}
 
-	written, paused, err := copyFile(srcAbsPath, dstAbsPath, cfg.BandwidthLimitKB, cfg.PauseCh)
-	if err != nil {
-		return 0, fmt.Errorf("copying file: %w", err)
+	// Attempt delta transfer first; fall back to full copy on miss or error.
+	written, usedDelta, deltaErr := tryDeltaTransfer(cfg, srcAbsPath, dstAbsPath)
+	if deltaErr != nil {
+		return 0, deltaErr
 	}
-	if paused {
-		os.Remove(dstAbsPath) //nolint:errcheck
-		return 0, errMidFilePause
+	if !usedDelta {
+		var paused bool
+		var copyErr error
+		written, paused, copyErr = copyFile(srcAbsPath, dstAbsPath, cfg.BandwidthLimitKB, cfg.PauseCh)
+		if copyErr != nil {
+			return 0, fmt.Errorf("copying file: %w", copyErr)
+		}
+		if paused {
+			os.Remove(dstAbsPath) //nolint:errcheck
+			return 0, errMidFilePause
+		}
 	}
 
-	destHash, err := hashFile(dstAbsPath)
+	algo := effectiveAlgo(cfg)
+	destHash, err := hasher.HashFile(algo, dstAbsPath)
 	if err != nil {
 		return 0, fmt.Errorf("hashing destination: %w", err)
 	}
@@ -714,7 +751,8 @@ func (e *Engine) transferFile(ctx context.Context, cfg Config, srcAbsPath, dstAb
 	if err := e.manifest.Put(ctx, &manifest.Entry{
 		JobID:       cfg.JobID,
 		RelPath:     fi.RelPath,
-		SHA256:      syncedHash,
+		ContentHash: syncedHash,
+		HashAlgo:    algo,
 		SizeBytes:   written,
 		ModTime:     fi.ModTime,
 		Permissions: fi.Permissions,
@@ -766,7 +804,7 @@ func (e *Engine) syncFileFS(ctx context.Context, cfg Config, srcFS, dstFS mountf
 		if lfs, ok := dstFS.(*mountfs.LocalFS); ok {
 			destAbsPath := filepath.Join(lfs.Root(), filepath.FromSlash(fi.RelPath))
 			if _, statErr := os.Stat(destAbsPath); statErr == nil {
-				_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, fi.RelPath, destAbsPath)
+				_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, fi.RelPath, destAbsPath, effectiveAlgo(cfg))
 			}
 		}
 	}
@@ -781,7 +819,8 @@ func (e *Engine) syncFileFS(ctx context.Context, cfg Config, srcFS, dstFS mountf
 // syncFileFSFull is the FullChecksum path: hash the source file in full first,
 // use the hash to decide skip vs copy, then verify the destination after transfer.
 func (e *Engine) syncFileFSFull(ctx context.Context, cfg Config, srcFS, dstFS mountfs.MountFS, fi FileInfo, entry *manifest.Entry, snapshot bool) (int, int, int64, error) {
-	srcHash, paused, err := hashFSFileWithPause(srcFS, fi.RelPath, cfg.PauseCh)
+	algo := effectiveAlgo(cfg)
+	srcHash, paused, err := hashFSFileWithPause(srcFS, fi.RelPath, cfg.PauseCh, algo)
 	if paused {
 		return 0, 0, 0, errMidFilePause
 	}
@@ -789,7 +828,7 @@ func (e *Engine) syncFileFSFull(ctx context.Context, cfg Config, srcFS, dstFS mo
 		return 0, 0, 0, fmt.Errorf("hashing source: %w", err)
 	}
 
-	if entry != nil && entry.SHA256 == srcHash {
+	if entry != nil && entry.ContentHash == srcHash {
 		if _, statErr := dstFS.Stat(fi.RelPath); statErr == nil {
 			return 0, 1, 0, nil
 		}
@@ -799,7 +838,7 @@ func (e *Engine) syncFileFSFull(ctx context.Context, cfg Config, srcFS, dstFS mo
 		if lfs, ok := dstFS.(*mountfs.LocalFS); ok {
 			destAbsPath := filepath.Join(lfs.Root(), filepath.FromSlash(fi.RelPath))
 			if _, statErr := os.Stat(destAbsPath); statErr == nil {
-				_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, fi.RelPath, destAbsPath)
+				_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, fi.RelPath, destAbsPath, algo)
 			}
 		}
 	}
@@ -812,7 +851,7 @@ func (e *Engine) syncFileFSFull(ctx context.Context, cfg Config, srcFS, dstFS mo
 }
 
 // transferFileFSStreaming copies fi from srcFS to dstFS in a single streaming pass,
-// computing SHA-256 hashes for both source and destination inline during the copy.
+// computing hashes for both source and destination inline during the copy.
 // This avoids the separate pre-copy source hash read used in the FullChecksum path.
 func (e *Engine) transferFileFSStreaming(ctx context.Context, cfg Config, srcFS, dstFS mountfs.MountFS, fi FileInfo) (int64, error) {
 	if cfg.OnFileCopyStart != nil {
@@ -823,6 +862,55 @@ func (e *Engine) transferFileFSStreaming(ctx context.Context, cfg Config, srcFS,
 	if dstDir != "" && dstDir != "." {
 		if err := dstFS.MkdirAll(dstDir); err != nil {
 			return 0, fmt.Errorf("mkdir: %w", err)
+		}
+	}
+
+	// When both sides are local and delta is enabled, attempt a delta transfer
+	// before falling back to the streaming copy path.
+	if cfg.UseDelta {
+		if srcLocal, ok := srcFS.(*mountfs.LocalFS); ok {
+			if dstLocal, ok := dstFS.(*mountfs.LocalFS); ok {
+				srcAbsPath := filepath.Join(srcLocal.Root(), filepath.FromSlash(fi.RelPath))
+				dstAbsPath := filepath.Join(dstLocal.Root(), filepath.FromSlash(fi.RelPath))
+				written, usedDelta, deltaErr := tryDeltaTransfer(cfg, srcAbsPath, dstAbsPath)
+				if deltaErr != nil {
+					return 0, deltaErr
+				}
+				if usedDelta {
+					if cfg.OnFileCopyStart != nil {
+						cfg.OnFileCopyStart(fi.RelPath)
+					}
+					algo := effectiveAlgo(cfg)
+					srcHash, err := hasher.HashFile(algo, srcAbsPath)
+					if err != nil {
+						return 0, fmt.Errorf("hashing source after delta: %w", err)
+					}
+					dstHash, err := hasher.HashFile(algo, dstAbsPath)
+					if err != nil {
+						return 0, fmt.Errorf("hashing dest after delta: %w", err)
+					}
+					if srcHash != dstHash {
+						return 0, fmt.Errorf("checksum mismatch after delta: src %s dest %s", srcHash, dstHash)
+					}
+					_ = dstLocal.Chtimes(fi.RelPath, fi.ModTime)
+					if fi.Permissions != 0 {
+						_ = dstLocal.Chmod(fi.RelPath, fi.Permissions)
+					}
+					if err := e.manifest.Put(ctx, &manifest.Entry{
+						JobID:       cfg.JobID,
+						RelPath:     fi.RelPath,
+						ContentHash: srcHash,
+						HashAlgo:    algo,
+						SizeBytes:   written,
+						ModTime:     fi.ModTime,
+						Permissions: fi.Permissions,
+						SyncedAt:    time.Now(),
+					}); err != nil {
+						return 0, fmt.Errorf("updating manifest: %w", err)
+					}
+					return written, nil
+				}
+			}
 		}
 	}
 
@@ -838,8 +926,9 @@ func (e *Engine) transferFileFSStreaming(ctx context.Context, cfg Config, srcFS,
 	}
 	defer dstFile.Close()
 
-	srcHasher := sha256.New()
-	dstHasher := sha256.New()
+	algo := effectiveAlgo(cfg)
+	srcHasher := newHasher(algo)
+	dstHasher := newHasher(algo)
 
 	// Single pass: throttled read → tee to src hasher → write to dest file + dest hasher.
 	// Wrap the destination writer with progressWriter when a mid-copy callback is set.
@@ -875,7 +964,8 @@ func (e *Engine) transferFileFSStreaming(ctx context.Context, cfg Config, srcFS,
 	if err := e.manifest.Put(ctx, &manifest.Entry{
 		JobID:       cfg.JobID,
 		RelPath:     fi.RelPath,
-		SHA256:      srcHash,
+		ContentHash: srcHash,
+		HashAlgo:    algo,
 		SizeBytes:   written,
 		ModTime:     fi.ModTime,
 		Permissions: fi.Permissions,
@@ -898,7 +988,8 @@ func mtimeMatch(a, b time.Time) bool {
 // Returns (filesCopied, filesSkipped, bytesWritten, error).
 // Kept for the local-only two-way engine path.
 func (e *Engine) syncFile(ctx context.Context, cfg Config, fi FileInfo, srcBase, destBase string, snapshot bool) (int, int, int64, error) {
-	srcHash, err := hashFile(fi.AbsPath)
+	algo := effectiveAlgo(cfg)
+	srcHash, err := hasher.HashFile(algo, fi.AbsPath)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("hashing source: %w", err)
 	}
@@ -910,7 +1001,7 @@ func (e *Engine) syncFile(ctx context.Context, cfg Config, fi FileInfo, srcBase,
 
 	destPath := filepath.Join(destBase, filepath.FromSlash(fi.RelPath))
 
-	if entry != nil && entry.SHA256 == srcHash {
+	if entry != nil && entry.ContentHash == srcHash {
 		if _, err := os.Stat(destPath); err == nil {
 			return 0, 1, 0, nil
 		}
@@ -918,7 +1009,7 @@ func (e *Engine) syncFile(ctx context.Context, cfg Config, fi FileInfo, srcBase,
 
 	if snapshot && cfg.VersionsSvc != nil {
 		if _, statErr := os.Stat(destPath); statErr == nil {
-			_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, fi.RelPath, destPath)
+			_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, fi.RelPath, destPath, algo)
 		}
 	}
 
@@ -963,46 +1054,113 @@ func inDestIndex(idx map[string]FileInfo, relPath string) bool {
 	return ok
 }
 
-// hashFile computes the SHA-256 hash of the file at path and returns it as a hex string.
-func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
+// tryDeltaTransfer attempts a rolling-checksum delta transfer from srcAbsPath to
+// dstAbsPath. It returns (bytesWritten, true, nil) on success, (0, false, nil)
+// when delta is not applicable or not beneficial (caller should fall back to a
+// full copy), or (0, false, err) on a hard failure that should be propagated.
+//
+// Delta is skipped when:
+//   - cfg.UseDelta is false
+//   - the source file is smaller than DeltaMinBytes (default 64 KiB)
+//   - the destination file does not yet exist
+//   - the computed delta would transfer >= 90% of the file as literals
+//
+// On any non-fatal internal error (e.g. signature computation, diff) the
+// function degrades gracefully to (0, false, nil) so the caller can retry
+// with a plain copy.
+func tryDeltaTransfer(cfg Config, srcAbsPath, dstAbsPath string) (int64, bool, error) {
+	if !cfg.UseDelta {
+		return 0, false, nil
 	}
-	defer f.Close()
 
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+	minBytes := cfg.DeltaMinBytes
+	if minBytes <= 0 {
+		minBytes = 65536
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+
+	srcInfo, err := os.Stat(srcAbsPath)
+	if err != nil || srcInfo.Size() < minBytes {
+		return 0, false, nil
+	}
+	if _, err := os.Stat(dstAbsPath); err != nil {
+		return 0, false, nil // dest doesn't exist yet — full copy required
+	}
+
+	blockSize := cfg.DeltaBlockSize
+	if blockSize <= 0 {
+		blockSize = delta.DefaultBlockSize
+	}
+
+	sig, err := delta.ComputeSignatureFile(dstAbsPath, blockSize)
+	if err != nil {
+		return 0, false, nil // non-fatal: fall back to full copy
+	}
+
+	srcFile, err := os.Open(srcAbsPath)
+	if err != nil {
+		return 0, false, nil
+	}
+	defer srcFile.Close()
+
+	ops, stats, err := delta.Diff(srcFile, sig)
+	if err != nil {
+		return 0, false, nil
+	}
+
+	// Not worth it if nearly everything is new content.
+	if stats.LiteralFraction() >= 0.9 {
+		return 0, false, nil
+	}
+
+	if err := delta.Apply(dstAbsPath, dstAbsPath, ops); err != nil {
+		// Apply failed after potentially modifying the dest — treat as hard error.
+		return 0, false, fmt.Errorf("delta apply: %w", err)
+	}
+
+	return delta.SizeBytes(ops), true, nil
 }
 
-// hashFSFile computes the SHA-256 hash of relPath within mfs.
-func hashFSFile(mfs mountfs.MountFS, relPath string) (string, error) {
+// effectiveAlgo returns the hash algorithm for cfg, defaulting to hasher.Default
+// when HashAlgo is empty. This ensures backward compatibility with configs created
+// before HashAlgo was added.
+func effectiveAlgo(cfg Config) string {
+	if cfg.HashAlgo == "" {
+		return hasher.Default
+	}
+	return cfg.HashAlgo
+}
+
+// newHasher returns a hash.Hash for algo. Panics if algo is unregistered — callers
+// should only pass values from effectiveAlgo, which returns known algorithms.
+func newHasher(algo string) hash.Hash {
+	h, err := hasher.New(algo)
+	if err != nil {
+		panic("engine: " + err.Error())
+	}
+	return h
+}
+
+// hashFSFile computes the content hash of relPath within mfs using algo.
+func hashFSFile(mfs mountfs.MountFS, relPath, algo string) (string, error) {
 	f, err := mfs.Open(relPath)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return hasher.HashReader(algo, f)
 }
 
-// hashFSFileWithPause computes the SHA-256 hash of relPath within mfs,
+// hashFSFileWithPause computes the content hash of relPath within mfs using algo,
 // checking pauseCh before each 32 KB chunk. Returns (hash, paused, error).
 // When paused is true the returned hash is empty and no error is set.
-func hashFSFileWithPause(mfs mountfs.MountFS, relPath string, pauseCh <-chan struct{}) (string, bool, error) {
+func hashFSFileWithPause(mfs mountfs.MountFS, relPath string, pauseCh <-chan struct{}, algo string) (string, bool, error) {
 	f, err := mfs.Open(relPath)
 	if err != nil {
 		return "", false, err
 	}
 	defer f.Close()
 
-	h := sha256.New()
+	h := newHasher(algo)
 	buf := make([]byte, 32*1024)
 	for {
 		if pauseCh != nil {

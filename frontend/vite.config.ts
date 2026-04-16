@@ -1,8 +1,5 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import https from 'node:https'
-
-const allowSelfSigned = new https.Agent({ rejectUnauthorized: false })
 
 export default defineConfig({
   plugins: [react()],
@@ -10,12 +7,13 @@ export default defineConfig({
     proxy: {
       '/api':    { target: 'https://localhost:8443', secure: false, changeOrigin: true },
       '/health': { target: 'https://localhost:8443', secure: false, changeOrigin: true },
-      '/ws':     { target: 'wss://localhost:8443',  ws: true, secure: false, changeOrigin: true, agent: allowSelfSigned },
+      '/ws':     { target: 'wss://localhost:8443',   ws: true,      secure: false, changeOrigin: true },
     },
   },
   test: {
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
+    exclude: ['e2e/**', 'node_modules/**'],
   },
 })

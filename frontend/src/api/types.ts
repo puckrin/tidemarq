@@ -12,6 +12,10 @@ export interface Job {
   cron_schedule: string
   watch_enabled: boolean
   full_checksum: boolean
+  hash_algo: 'sha256' | 'blake3'
+  use_delta: boolean
+  delta_block_size: number
+  delta_min_bytes: number
   last_run_at: string | null
   last_error: string | null
   created_at: string
@@ -33,8 +37,10 @@ export interface Conflict {
   id: number
   job_id: number
   rel_path: string
-  src_sha256: string
-  dest_sha256: string
+  src_content_hash: string
+  dest_content_hash: string
+  src_hash_algo: string
+  dest_hash_algo: string
   src_mod_time: string
   dest_mod_time: string
   src_size: number
@@ -52,7 +58,8 @@ export interface FileVersion {
   rel_path: string
   version_num: number
   stored_path: string
-  sha256: string
+  content_hash: string
+  hash_algo: string
   size_bytes: number
   mod_time: string
   created_at: string
@@ -63,7 +70,8 @@ export interface QuarantineEntry {
   job_id: number
   rel_path: string
   quarantine_path: string
-  sha256: string
+  content_hash: string
+  hash_algo: string
   size_bytes: number
   deleted_at: string
   expires_at: string

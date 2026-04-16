@@ -22,6 +22,10 @@ type Job struct {
 	CronSchedule     string     `json:"cron_schedule"`
 	WatchEnabled     bool       `json:"watch_enabled"`
 	FullChecksum     bool       `json:"full_checksum"`
+	HashAlgo         string     `json:"hash_algo"`
+	UseDelta         bool       `json:"use_delta"`
+	DeltaBlockSize   int64      `json:"delta_block_size"`
+	DeltaMinBytes    int64      `json:"delta_min_bytes"`
 	LastRunAt        *time.Time `json:"last_run_at,omitempty"`
 	LastError        *string    `json:"last_error,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
@@ -41,6 +45,10 @@ type CreateJobParams struct {
 	CronSchedule     string
 	WatchEnabled     bool
 	FullChecksum     bool
+	HashAlgo         string
+	UseDelta         bool
+	DeltaBlockSize   int64
+	DeltaMinBytes    int64
 }
 
 // UpdateJobParams holds the fields that may be updated on a job.
@@ -56,6 +64,10 @@ type UpdateJobParams struct {
 	CronSchedule     string
 	WatchEnabled     bool
 	FullChecksum     bool
+	HashAlgo         string
+	UseDelta         bool
+	DeltaBlockSize   int64
+	DeltaMinBytes    int64
 }
 
 // CreateJob inserts a new job and returns the created record.
@@ -64,9 +76,9 @@ func (db *DB) CreateJob(ctx context.Context, p CreateJobParams) (*Job, error) {
 		p.ConflictStrategy = "ask-user"
 	}
 	res, err := db.ExecContext(ctx,
-		`INSERT INTO jobs (name, source_path, destination_path, source_mount_id, dest_mount_id, mode, bandwidth_limit_kb, conflict_strategy, cron_schedule, watch_enabled, full_checksum)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, p.SourcePath, p.DestinationPath, p.SourceMountID, p.DestMountID, p.Mode, p.BandwidthLimitKB, p.ConflictStrategy, p.CronSchedule, p.WatchEnabled, p.FullChecksum,
+		`INSERT INTO jobs (name, source_path, destination_path, source_mount_id, dest_mount_id, mode, bandwidth_limit_kb, conflict_strategy, cron_schedule, watch_enabled, full_checksum, hash_algo, use_delta, delta_block_size, delta_min_bytes)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.SourcePath, p.DestinationPath, p.SourceMountID, p.DestMountID, p.Mode, p.BandwidthLimitKB, p.ConflictStrategy, p.CronSchedule, p.WatchEnabled, p.FullChecksum, p.HashAlgo, p.UseDelta, p.DeltaBlockSize, p.DeltaMinBytes,
 	)
 	if err != nil {
 		return nil, err
@@ -82,7 +94,8 @@ func (db *DB) CreateJob(ctx context.Context, p CreateJobParams) (*Job, error) {
 func (db *DB) GetJobByID(ctx context.Context, id int64) (*Job, error) {
 	row := db.QueryRowContext(ctx,
 		`SELECT id, name, source_path, destination_path, source_mount_id, dest_mount_id, mode, status, bandwidth_limit_kb,
-		        conflict_strategy, cron_schedule, watch_enabled, full_checksum, last_run_at, last_error, created_at, updated_at
+		        conflict_strategy, cron_schedule, watch_enabled, full_checksum, hash_algo, use_delta, delta_block_size, delta_min_bytes,
+		        last_run_at, last_error, created_at, updated_at
 		 FROM jobs WHERE id = ?`, id,
 	)
 	return scanJobFrom(row)
@@ -92,7 +105,8 @@ func (db *DB) GetJobByID(ctx context.Context, id int64) (*Job, error) {
 func (db *DB) ListJobs(ctx context.Context) ([]*Job, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT id, name, source_path, destination_path, source_mount_id, dest_mount_id, mode, status, bandwidth_limit_kb,
-		        conflict_strategy, cron_schedule, watch_enabled, full_checksum, last_run_at, last_error, created_at, updated_at
+		        conflict_strategy, cron_schedule, watch_enabled, full_checksum, hash_algo, use_delta, delta_block_size, delta_min_bytes,
+		        last_run_at, last_error, created_at, updated_at
 		 FROM jobs ORDER BY name`,
 	)
 	if err != nil {
@@ -119,11 +133,12 @@ func (db *DB) UpdateJob(ctx context.Context, id int64, p UpdateJobParams) (*Job,
 	_, err := db.ExecContext(ctx,
 		`UPDATE jobs SET name = ?, source_path = ?, destination_path = ?, source_mount_id = ?, dest_mount_id = ?,
 		                 mode = ?, bandwidth_limit_kb = ?, conflict_strategy = ?, cron_schedule = ?, watch_enabled = ?,
-		                 full_checksum = ?, updated_at = CURRENT_TIMESTAMP
+		                 full_checksum = ?, hash_algo = ?, use_delta = ?, delta_block_size = ?, delta_min_bytes = ?,
+		                 updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ?`,
 		p.Name, p.SourcePath, p.DestinationPath, p.SourceMountID, p.DestMountID,
 		p.Mode, p.BandwidthLimitKB, p.ConflictStrategy, p.CronSchedule, p.WatchEnabled,
-		p.FullChecksum, id,
+		p.FullChecksum, p.HashAlgo, p.UseDelta, p.DeltaBlockSize, p.DeltaMinBytes, id,
 	)
 	if err != nil {
 		return nil, err
@@ -171,11 +186,11 @@ type jobScanner interface {
 
 func scanJobFrom(s jobScanner) (*Job, error) {
 	j := &Job{}
-	var watchEnabled, fullChecksum int
+	var watchEnabled, fullChecksum, useDelta int
 	err := s.Scan(
 		&j.ID, &j.Name, &j.SourcePath, &j.DestinationPath, &j.SourceMountID, &j.DestMountID,
 		&j.Mode, &j.Status, &j.BandwidthLimitKB, &j.ConflictStrategy, &j.CronSchedule,
-		&watchEnabled, &fullChecksum,
+		&watchEnabled, &fullChecksum, &j.HashAlgo, &useDelta, &j.DeltaBlockSize, &j.DeltaMinBytes,
 		&j.LastRunAt, &j.LastError, &j.CreatedAt, &j.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -186,5 +201,6 @@ func scanJobFrom(s jobScanner) (*Job, error) {
 	}
 	j.WatchEnabled = watchEnabled != 0
 	j.FullChecksum = fullChecksum != 0
+	j.UseDelta = useDelta != 0
 	return j, nil
 }

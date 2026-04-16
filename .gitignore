@@ -1,11 +1,14 @@
 # Backend build output
 backend/bin/
 backend/tmp/
+*.exe
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/playwright-report/
+frontend/test-results/
 
 # Database files
 *.db
@@ -16,14 +19,19 @@ frontend/.vite/
 .env
 .env.*
 tidemarq.yaml.local
+tidemarq.local.yaml
+tidemarq.dev.yaml
+tidemarq.yaml.bak
 
 # TLS certificates (auto-generated)
 *.pem
 *.crt
 *.key
 
-# Docker volumes (if mapped locally)
+# Docker volumes and local dev data
 data/
+dev-data/
+backend/dev-data/
 
 # OS
 .DS_Store
@@ -33,3 +41,10 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Claude Code project state
+.claude/
+
+# Design docs (local reference only, not needed in repo)
+tidemarq-style-guide.docx
+style-guide-unpacked/

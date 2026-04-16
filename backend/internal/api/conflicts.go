@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -87,7 +88,7 @@ func (s *Server) handleResolveConflict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.conflictsSvc.Resolve(r.Context(), id, req.Action, job.SourcePath+"/"+c.RelPath, job.DestinationPath+"/"+c.RelPath); err != nil {
+	if err := s.conflictsSvc.Resolve(r.Context(), id, req.Action, filepath.Join(job.SourcePath, c.RelPath), filepath.Join(job.DestinationPath, c.RelPath)); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error(), "bad_request")
 		return
 	}

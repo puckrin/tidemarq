@@ -1,162 +1,69 @@
 # tidemarq
 
-A self-hosted directory synchronisation tool with a browser-based UI.
-Runs as a single Docker container with no external cloud dependencies.
-
-## Features
-
-- **One-way backup** — copy files from source to destination; deletions are never propagated
-- **One-way mirror** — keep destination an exact replica of source; removals move files to quarantine
-- **Two-way sync** — propagate changes in both directions with configurable conflict resolution
-- **Conflict resolution** — automatic strategies (newest-wins, largest-wins, source-wins, dest-wins) or manual review queue
-- **Version history** — previous file versions stored and restorable
-- **Quarantine** — soft-delete with configurable retention before permanent removal
-- **Network mounts** — SMB/CIFS and SFTP sources and destinations
-- **Scheduling** — cron triggers and filesystem-watch triggers
-- **Live progress** — real-time transfer progress via WebSocket
-- **Audit log** — full history of all sync activity, exportable as CSV or JSON
-- **Role-based access** — admin, operator, and viewer roles
-- **Dark / light mode** — respects OS preference
-
-## Quick start
-
-### Prerequisites
-
-- Docker and Docker Compose
-
-### 1. Create a `docker-compose.yml`
-
-```yaml
-services:
-  tidemarq:
-    image: ghcr.io/puckrin/tidemarq:latest
-    ports:
-      - "80:8080"
-      - "8443:8443"
-    volumes:
-      - tidemarq_data:/data
-    environment:
-      - TIDEMARQ_AUTH_JWT_SECRET=<generate with: openssl rand -base64 32>
-      - TIDEMARQ_ADMIN_PASSWORD=changeme
-    restart: unless-stopped
-
-volumes:
-  tidemarq_data:
-```
-
-### 2. Start
-
-```bash
-docker compose up -d
-```
-
-### 3. Open the UI
-
-Navigate to `https://localhost:8443` and log in with username `admin` and the
-password you set in `TIDEMARQ_ADMIN_PASSWORD`.
-
-A self-signed TLS certificate is generated automatically on first start.
-Accept the browser warning or supply your own certificate via config.
+A self-hosted directory synchronisation tool with a browser-based UI. Runs as a Docker Compose stack with no external cloud dependencies.
 
 ---
 
-## Configuration
+## How tidemarq transfers files
 
-All configuration can be supplied via environment variables or a `tidemarq.yaml`
-file mounted at `/etc/tidemarq/tidemarq.yaml`. Environment variables take
-precedence. See [`tidemarq.example.yaml`](tidemarq.example.yaml) for the full
-reference.
+**Tools like rsync** use an efficient delta algorithm — only changed bytes travel the wire. But they require their own software running on both machines. Sync to an SFTP server or a shared SMB volume and you need rsync installed on the remote too.
 
-### Required
+**Tools like restic** need nothing on the remote, doing all the work on the client. But the destination is an opaque repository format. You can't mount your NAS and open a synced file directly — you have to restore it through restic first. It's a backup tool, not a sync tool.
 
-| Environment variable | Description |
-|---|---|
-| `TIDEMARQ_AUTH_JWT_SECRET` | Secret used to sign session tokens. Minimum 32 characters. Generate with `openssl rand -base64 32`. |
-| `TIDEMARQ_ADMIN_PASSWORD` | Password for the built-in admin account created on first start. |
+**tidemarq** takes a different position. The destination is always a plain directory — open any file directly, mount it from another machine, copy files out manually. No proprietary format, no remote agent to install.
 
-### Optional
+For local transfers, tidemarq uses a rolling-checksum delta algorithm: it signatures the existing destination file, diffs the source against it, and writes only the changed regions. Large files with small modifications transfer in seconds.
 
-| Environment variable | Default | Description |
-|---|---|---|
-| `TIDEMARQ_SERVER_HTTP_PORT` | `8080` | HTTP port (redirects to HTTPS) |
-| `TIDEMARQ_SERVER_HTTPS_PORT` | `8443` | HTTPS port |
-| `TIDEMARQ_SERVER_DATA_DIR` | `/data` | Persistent storage root — mount a volume here |
-| `TIDEMARQ_AUTH_JWT_TTL` | `24h` | Session token lifetime |
-| `TIDEMARQ_ADMIN_USERNAME` | `admin` | Username for the built-in admin account |
-| `TIDEMARQ_TLS_CERT_FILE` | *(auto-generated)* | Path to TLS certificate |
-| `TIDEMARQ_TLS_KEY_FILE` | *(auto-generated)* | Path to TLS private key |
+For network destinations (SFTP, SMB), tidemarq performs a full streaming copy. Without software on the remote there is no way to discover what has changed without reading the destination file first — downloading it to diff it would save bytes in one direction at the cost of the other, a poor trade on most connections.
 
-### Using your own TLS certificate
+Because tidemarq always reads what is actually on the destination before writing, it also handles the case where someone else modified a file on the NAS between syncs. There is no local cache of assumed state that can drift from reality.
 
-Mount your certificate and key into the container and point to them:
-
-```yaml
-environment:
-  - TIDEMARQ_TLS_CERT_FILE=/data/certs/fullchain.pem
-  - TIDEMARQ_TLS_KEY_FILE=/data/certs/privkey.pem
-volumes:
-  - /etc/letsencrypt/live/yourdomain:/data/certs:ro
-  - tidemarq_data:/data
-```
+Simple to deploy. Nothing to install on the remote. Always correct.
 
 ---
 
-## Building from source
+## Running tidemarq
 
 ```bash
-# Backend
-cd backend
-go build ./cmd/tidemarq
-
-# Frontend
-cd frontend
-npm install
-npm run build
-
-# Full stack (Docker)
+# Full stack — UI available at https://localhost:8717
 docker compose up --build
-```
 
-### Running in development
-
-```bash
-# Backend (from backend/)
+# Backend only (from backend/) — uses tidemarq.dev.yaml if present
 go run ./cmd/tidemarq
 
-# Frontend dev server with HMR (from frontend/)
-npm run dev
+# Frontend dev server (from frontend/) — proxies API to https://localhost:8443
+npm install && npm run dev
 ```
 
-The frontend dev server proxies API calls to the backend.
+### Ports
+
+#### Docker / production (`tidemarq.example.yaml`)
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 8716 | HTTP | Redirects to HTTPS |
+| 8717 | HTTPS | Main UI and API |
+
+#### Local development (`tidemarq.dev.yaml`)
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 8080 | HTTP | Redirects to HTTPS |
+| 8443 | HTTPS | Backend API |
+| 5173 | HTTP | Vite dev server (frontend) |
+
+### First start
+
+On first start tidemarq will:
+- Create a default admin account (username `admin`, password from config or `TIDEMARQ_ADMIN_PASSWORD`)
+- Auto-generate a TLS certificate if none is configured
+- Auto-generate a JWT signing secret stored in `<data_dir>/.jwt_secret`
+
+No manual token generation is required.
 
 ---
 
-## Tech stack
+## Documentation
 
-| Layer | Technology |
-|---|---|
-| Backend | Go — single binary, no CGO |
-| Frontend | React + TypeScript + Vite |
-| Database | SQLite (pure Go, no CGO) — PostgreSQL supported via config |
-| Container | Docker multi-stage — distroless final image |
-
----
-
-## Contributing
-
-Pull requests are welcome. For significant changes please open an issue first
-to discuss the approach.
-
-```bash
-# Run backend tests
-cd backend && go test ./...
-
-# Run frontend tests
-cd frontend && npm test
-```
-
----
-
-## License
-
-[MIT](LICENSE)
+- `sync_app_spec.md` — full functional specification
+- `CLAUDE.md` — developer guide and architectural rules

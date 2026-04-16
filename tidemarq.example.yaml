@@ -21,8 +21,10 @@ tls:
   key_file:  /data/certs/server.key
 
 auth:
-  # REQUIRED — minimum 32 characters.
-  # Generate one with: openssl rand -base64 32
+  # Optional. If left empty, a secret is auto-generated on first start and
+  # saved to <data_dir>/.jwt_secret so it survives restarts automatically.
+  # Set this explicitly only if you need tokens to remain valid across
+  # multiple instances or after wiping the data directory.
   # Environment variable: TIDEMARQ_AUTH_JWT_SECRET
   jwt_secret: ""
   jwt_ttl: 24h
