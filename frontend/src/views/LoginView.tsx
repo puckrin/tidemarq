@@ -71,8 +71,9 @@ export function LoginView({ onLogin }: Props) {
 
         <form onSubmit={submit}>
           <div className="fg">
-            <label className="fl" style={{ color: '#A3DDE6' }}>Username</label>
+            <label htmlFor="login-username" className="fl" style={{ color: '#A3DDE6' }}>Username</label>
             <input
+              id="login-username"
               className="fi"
               type="text"
               autoComplete="username"
@@ -84,8 +85,9 @@ export function LoginView({ onLogin }: Props) {
           </div>
 
           <div className="fg">
-            <label className="fl" style={{ color: '#A3DDE6' }}>Password</label>
+            <label htmlFor="login-password" className="fl" style={{ color: '#A3DDE6' }}>Password</label>
             <input
+              id="login-password"
               className="fi"
               type="password"
               autoComplete="current-password"

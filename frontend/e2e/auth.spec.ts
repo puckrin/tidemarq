@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test.describe('Authentication', () => {
   test('login page is shown when unauthenticated', async ({ page }) => {
     await page.goto('/')
-    await expect(page.getByRole('heading', { name: /tidemarq/i })).toBeVisible()
+    await expect(page.getByText('tidemarq')).toBeVisible()
     await expect(page.getByLabel(/username/i)).toBeVisible()
     await expect(page.getByLabel(/password/i)).toBeVisible()
   })
@@ -13,7 +13,7 @@ test.describe('Authentication', () => {
     await page.getByLabel(/username/i).fill('admin')
     await page.getByLabel(/password/i).fill('wrongpassword')
     await page.getByRole('button', { name: /sign in/i }).click()
-    await expect(page.getByText(/invalid|incorrect|unauthorized/i)).toBeVisible()
+    await expect(page.getByText('Invalid username or password.')).toBeVisible()
   })
 
   test('valid credentials navigate to dashboard', async ({ page }) => {
