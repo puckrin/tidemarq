@@ -28,19 +28,29 @@ Simple to deploy. Nothing to install on the remote. Always correct.
 # Full stack — UI available at https://localhost:8717
 docker compose up --build
 
-# Backend only (from backend/)
+# Backend only (from backend/) — uses tidemarq.dev.yaml if present
 go run ./cmd/tidemarq
 
-# Frontend dev server (from frontend/) — proxies API to https://localhost:8717
+# Frontend dev server (from frontend/) — proxies API to https://localhost:8443
 npm install && npm run dev
 ```
 
 ### Ports
 
+#### Docker / production (`tidemarq.example.yaml`)
+
 | Port | Protocol | Purpose |
 |------|----------|---------|
 | 8716 | HTTP | Redirects to HTTPS |
 | 8717 | HTTPS | Main UI and API |
+
+#### Local development (`tidemarq.dev.yaml`)
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 8080 | HTTP | Redirects to HTTPS |
+| 8443 | HTTPS | Backend API |
+| 5173 | HTTP | Vite dev server (frontend) |
 
 ### First start
 
