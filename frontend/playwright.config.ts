@@ -9,10 +9,22 @@ export default defineConfig({
   reporter: 'html',
 
   use: {
-    baseURL: process.env.TIDEMARQ_URL ?? 'https://localhost:8717',
-    ignoreHTTPSErrors: true, // self-signed cert in dev
+    // In dev, tests hit the Vite dev server which proxies /api and /ws to the backend.
+    // In CI (or when TIDEMARQ_URL is set), tests hit the backend directly.
+    baseURL: process.env.TIDEMARQ_URL ?? 'http://localhost:5173',
+    ignoreHTTPSErrors: true,
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+  },
+
+  // Start the Vite dev server automatically before running tests (dev only).
+  // Requires the backend to already be running at https://localhost:8717.
+  // Skip this block when TIDEMARQ_URL is set (CI / built frontend).
+  webServer: process.env.TIDEMARQ_URL ? undefined : {
+    command: 'npm run dev',
+    url: 'http://localhost:5173',
+    reuseExistingServer: true,
+    timeout: 30000,
   },
 
   projects: [
