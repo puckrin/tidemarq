@@ -221,8 +221,9 @@ export function NewJobView({ onNav, editJobId }: Props) {
           <div className="card mb16">
             <div className="card-title mb16">Step 1 — Name &amp; Source</div>
             <div className="fg">
-              <label className="fl">Job name</label>
+              <label htmlFor="nj-name" className="fl">Job name</label>
               <input
+                id="nj-name"
                 className="fi"
                 placeholder="e.g. Documents → NAS Backup"
                 value={form.name}

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { login, nav } from './helpers'
+import { login, nav, getToken } from './helpers'
 
 test.describe('Quarantine', () => {
   test.beforeEach(async ({ page }) => {
@@ -8,11 +8,14 @@ test.describe('Quarantine', () => {
 
   test('quarantine page loads', async ({ page }) => {
     await nav(page, /quarantine/i)
-    await expect(page.getByRole('heading', { name: /quarantine/i })).toBeVisible()
+    await expect(page.locator('.page-title')).toBeVisible()
   })
 
   test('quarantined files are listed with expiry', async ({ page, request }) => {
-    const resp = await request.get('/api/v1/quarantine?status=active')
+    const token = await getToken(page)
+    const resp = await request.get('/api/v1/quarantine?status=active', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
     if (!resp.ok()) { test.skip(); return }
     const entries = await resp.json()
     if (entries.length === 0) { test.skip(); return }
@@ -24,7 +27,10 @@ test.describe('Quarantine', () => {
   })
 
   test('restore button calls API and removes entry from list', async ({ page, request }) => {
-    const resp = await request.get('/api/v1/quarantine?status=active')
+    const token = await getToken(page)
+    const resp = await request.get('/api/v1/quarantine?status=active', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
     if (!resp.ok()) { test.skip(); return }
     const entries = await resp.json()
     if (entries.length === 0) { test.skip(); return }

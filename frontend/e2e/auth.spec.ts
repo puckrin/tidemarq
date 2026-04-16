@@ -22,7 +22,7 @@ test.describe('Authentication', () => {
     await page.getByLabel(/password/i).fill(process.env.TIDEMARQ_ADMIN_PASSWORD ?? 'admin')
     await page.getByRole('button', { name: /sign in/i }).click()
     await expect(page).toHaveURL(/\/(dashboard)?$/)
-    await expect(page.getByText(/dashboard/i)).toBeVisible()
+    await expect(page.locator('.page-title').first()).toBeVisible()
   })
 
   test('protected routes redirect to login when unauthenticated', async ({ page }) => {

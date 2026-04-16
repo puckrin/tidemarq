@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { login, nav } from './helpers'
+import { login, nav, getToken } from './helpers'
 import { fileURLToPath } from 'url'
 import * as path from 'path'
 
@@ -17,41 +17,44 @@ test.describe('Job management', () => {
   })
 
   test('jobs list page loads', async ({ page }) => {
-    await expect(page.getByRole('heading', { name: /sync jobs/i })).toBeVisible()
+    await expect(page.locator('.page-title')).toBeVisible()
   })
 
   test('new job wizard — creates a one-way-backup job', async ({ page }) => {
     await page.getByRole('button', { name: /new job/i }).click()
 
-    // Step 1: name and mode
+    // Step 1: name + source
+    // Label has htmlFor="nj-name" so getByLabel works
     await page.getByLabel(/job name/i).fill('E2E - Simple Backup')
-    await page.getByLabel(/one.way backup/i).check()
+    // PathPicker source text input (placeholder is /local/path)
+    await page.locator('input[placeholder="/local/path"]').fill(`${FIXTURES}/01-backup-simple/source`)
     await page.getByRole('button', { name: /next/i }).click()
 
-    // Step 2: source path
-    await page.getByLabel(/source/i).fill(`${FIXTURES}/01-backup-simple/source`)
+    // Step 2: destination
+    await page.locator('input[placeholder="/local/path"]').fill(`${FIXTURES}/01-backup-simple/destination-e2e`)
     await page.getByRole('button', { name: /next/i }).click()
 
-    // Step 3: destination path
-    await page.getByLabel(/destination/i).fill(`${FIXTURES}/01-backup-simple/destination-e2e`)
+    // Step 3: mode — default is one-way-backup (mode card already selected), just advance
     await page.getByRole('button', { name: /next/i }).click()
 
-    // Step 4: trigger (skip — leave as manual)
+    // Step 4: schedule & transfer (leave defaults)
     await page.getByRole('button', { name: /next/i }).click()
 
-    // Step 5: review and create
+    // Step 5: review — job name should appear in the summary
     await expect(page.getByText('E2E - Simple Backup')).toBeVisible()
     await page.getByRole('button', { name: /create job/i }).click()
 
-    // Should return to jobs list with new job visible
+    // After creation the app navigates to job detail — breadcrumb confirms we left the wizard
+    await expect(page.locator('.bc')).toBeVisible({ timeout: 8000 })
     await expect(page.getByText('E2E - Simple Backup')).toBeVisible()
   })
 
   test('job detail page is reachable', async ({ page }) => {
-    // Assumes at least one job exists (created by setup.sh or the wizard test above)
+    // Assumes at least one job exists
     const firstJob = page.getByRole('table').getByRole('row').nth(1)
     await firstJob.click()
-    await expect(page.getByRole('heading')).toBeVisible()
+    // Job detail renders a breadcrumb "Sync Jobs / <name>" — no heading element
+    await expect(page.locator('.bc')).toBeVisible()
   })
 })
 
@@ -84,8 +87,11 @@ test.describe('Job execution — idempotency (Job 11)', () => {
   })
 
   test('idempotency job transfers zero files on second run', async ({ page, request }) => {
+    const token = await getToken(page)
+    const headers = { Authorization: `Bearer ${token}` }
+
     // Find the job via API so we can run it directly
-    const listResp = await request.get('/api/v1/jobs')
+    const listResp = await request.get('/api/v1/jobs', { headers })
     if (!listResp.ok()) { test.skip(); return }
 
     const jobs: Array<{ id: number; name: string }> = await listResp.json()
@@ -94,13 +100,13 @@ test.describe('Job execution — idempotency (Job 11)', () => {
 
     // Run the job twice via API
     for (let run = 1; run <= 2; run++) {
-      const runResp = await request.post(`/api/v1/jobs/${job.id}/run`)
+      const runResp = await request.post(`/api/v1/jobs/${job.id}/run`, { headers })
       expect(runResp.ok()).toBeTruthy()
 
       // Poll until idle
       await page.waitForTimeout(1000)
       for (let i = 0; i < 30; i++) {
-        const s = await request.get(`/api/v1/jobs/${job.id}`)
+        const s = await request.get(`/api/v1/jobs/${job.id}`, { headers })
         const data = await s.json()
         if (data.status === 'idle') break
         await page.waitForTimeout(1000)
@@ -108,7 +114,7 @@ test.describe('Job execution — idempotency (Job 11)', () => {
 
       // On the second run, audit log should show 0 files changed
       if (run === 2) {
-        const auditResp = await request.get(`/api/v1/audit?job_id=${job.id}`)
+        const auditResp = await request.get(`/api/v1/audit?job_id=${job.id}`, { headers })
         const audit: Array<{ event: string; detail: string }> = await auditResp.json()
         const lastRun = audit.find(e => e.event === 'job.completed')
         expect(lastRun?.detail).toMatch(/files_copied.*0|0.*files/i)

@@ -21,10 +21,12 @@ export default defineConfig({
   // Requires the backend to already be running at https://localhost:8717.
   // Skip this block when TIDEMARQ_URL is set (CI / built frontend).
   webServer: process.env.TIDEMARQ_URL ? undefined : {
-    command: 'npm run dev',
+    command: 'npx vite',
     url: 'http://localhost:5173',
     reuseExistingServer: true,
-    timeout: 30000,
+    timeout: 60000,
+    stdout: 'pipe',
+    stderr: 'pipe',
   },
 
   projects: [

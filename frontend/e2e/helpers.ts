@@ -1,20 +1,26 @@
 import { Page } from '@playwright/test'
 
-const BASE_URL = process.env.TIDEMARQ_URL ?? 'https://localhost:8717'
 const ADMIN_USER = process.env.TIDEMARQ_ADMIN_USER ?? 'admin'
 const ADMIN_PASS = process.env.TIDEMARQ_ADMIN_PASSWORD ?? 'admin'
 
 /**
- * Log in and store auth state for the session.
- * Call this in test.beforeEach or test.use({ storageState }) for speed.
+ * Log in and wait for the sidebar (navigation) to confirm auth is complete.
  */
 export async function login(page: Page) {
   await page.goto('/')
   await page.getByLabel(/username/i).fill(ADMIN_USER)
   await page.getByLabel(/password/i).fill(ADMIN_PASS)
   await page.getByRole('button', { name: /sign in/i }).click()
-  // Wait for redirect away from login
-  await page.waitForURL((url) => !url.pathname.includes('login'), { timeout: 5000 })
+  // Wait for the sidebar to appear — confirms the login API call succeeded
+  // and React has re-rendered the authenticated shell.
+  await page.getByRole('navigation').waitFor({ state: 'visible', timeout: 8000 })
+}
+
+/**
+ * Read the JWT from the page's localStorage so request fixtures can auth.
+ */
+export async function getToken(page: Page): Promise<string> {
+  return (await page.evaluate(() => localStorage.getItem('token'))) ?? ''
 }
 
 /**
@@ -24,4 +30,4 @@ export async function nav(page: Page, label: RegExp | string) {
   await page.getByRole('navigation').getByText(label).click()
 }
 
-export { BASE_URL, ADMIN_USER, ADMIN_PASS }
+export { ADMIN_USER, ADMIN_PASS }
