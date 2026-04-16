@@ -336,7 +336,7 @@ func testEnvFull(t *testing.T) (eng *engine.Engine, jobID int64, src, dst string
 
 	store := manifest.New(d)
 	eng = engine.New(store)
-	vSvc = versions.New(d, t.TempDir(), 30)
+	vSvc = versions.New(d, t.TempDir())
 	cSvc = conflicts.New(d)
 	return eng, job.ID, src, dst, vSvc, cSvc
 }

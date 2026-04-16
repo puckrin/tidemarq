@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react'
 import { Moon, Sun } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listUsers, createUser, updateUser, deleteUser, getHealth } from '../api/client'
+import { listUsers, createUser, updateUser, deleteUser, getHealth, getSettings, updateSettings } from '../api/client'
 import { useAuth } from '../store/auth'
 import { Button } from '../components/Button'
 import { Modal } from '../components/Modal'
 import { useToast } from '../components/Toast'
-import type { User } from '../api/types'
+import type { User, AppSettings } from '../api/types'
 
 type Tab = 'general' | 'users' | 'about'
 
@@ -71,6 +71,28 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
 
   const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: listUsers })
   const { data: health }      = useQuery({ queryKey: ['health'], queryFn: getHealth })
+  const { data: appSettings } = useQuery({ queryKey: ['settings'], queryFn: getSettings })
+
+  const [syncDefaults, setSyncDefaults] = useState<Pick<AppSettings, 'versions_to_keep' | 'quarantine_retention_days'>>({
+    versions_to_keep: 10,
+    quarantine_retention_days: 30,
+  })
+  // Populate form from API once loaded
+  useEffect(() => {
+    if (appSettings) setSyncDefaults({
+      versions_to_keep: appSettings.versions_to_keep,
+      quarantine_retention_days: appSettings.quarantine_retention_days,
+    })
+  }, [appSettings])
+
+  const saveSettings = useMutation({
+    mutationFn: () => updateSettings(syncDefaults),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['settings'] })
+      toast('Settings saved.', 'ok')
+    },
+    onError: () => toast('Failed to save settings.', 'err'),
+  })
 
   const { show: showBanner, dismiss: dismissBanner } = useIsDefaultPassword(users)
 
@@ -147,33 +169,31 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
             <div className="ssec-title">Sync Defaults</div>
             <div className="srow">
               <div>
-                <div className="srow-name">Default conflict strategy</div>
-                <div className="srow-desc">Applied when creating new jobs</div>
-              </div>
-              <select className="fs" style={{ maxWidth: 280 }}>
-                <option>Ask user</option>
-                <option>Newest wins</option>
-                <option>Source wins</option>
-              </select>
-            </div>
-            <div className="srow">
-              <div>
                 <div className="srow-name">Version history</div>
-                <div className="srow-desc">Default number of versions to keep per file</div>
+                <div className="srow-desc">Versions to keep per file (0 = unlimited)</div>
               </div>
-              <input className="fi" style={{ maxWidth: 100 }} defaultValue="10" type="number" min={0}/>
+              <input
+                className="fi" style={{ maxWidth: 100 }} type="number" min={0}
+                value={syncDefaults.versions_to_keep}
+                onChange={e => setSyncDefaults(s => ({ ...s, versions_to_keep: Number(e.target.value) }))}
+              />
             </div>
             <div className="srow">
               <div>
                 <div className="srow-name">Soft delete retention</div>
                 <div className="srow-desc">Days before quarantined files are permanently removed</div>
               </div>
-              <input className="fi" style={{ maxWidth: 100 }} defaultValue="14" type="number" min={1}/>
+              <input
+                className="fi" style={{ maxWidth: 100 }} type="number" min={1}
+                value={syncDefaults.quarantine_retention_days}
+                onChange={e => setSyncDefaults(s => ({ ...s, quarantine_retention_days: Number(e.target.value) }))}
+              />
             </div>
-
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <Button variant="primary" onClick={() => toast('Settings saved.', 'ok')}>Save changes</Button>
+            <Button variant="primary" disabled={saveSettings.isPending} onClick={() => saveSettings.mutate()}>
+              {saveSettings.isPending ? 'Saving…' : 'Save changes'}
+            </Button>
           </div>
         </div>
       )}

@@ -33,7 +33,7 @@ func newTestService(t *testing.T) (*versions.Service, *db.DB, int64) {
 	}
 
 	versionsDir := t.TempDir()
-	svc := versions.New(d, versionsDir, 30)
+	svc := versions.New(d, versionsDir)
 	return svc, d, j.ID
 }
 

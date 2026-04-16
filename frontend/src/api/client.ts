@@ -1,4 +1,4 @@
-import type { Job, Conflict, FileVersion, QuarantineEntry, User, HealthResponse, Mount, MountInput, AuditEntry, BrowseResponse } from './types'
+import type { Job, Conflict, FileVersion, QuarantineEntry, User, HealthResponse, Mount, MountInput, AuditEntry, BrowseResponse, AppSettings } from './types'
 
 const BASE = '/api/v1'
 
@@ -109,6 +109,12 @@ export const deleteMount = (id: number) =>
   request<void>(`${BASE}/mounts/${id}`, { method: 'DELETE' })
 export const testMount = (id: number) =>
   request<{ ok: boolean; error?: string }>(`${BASE}/mounts/${id}/test`, { method: 'POST' })
+
+// Settings
+export const getSettings = () =>
+  request<AppSettings>(`${BASE}/settings`)
+export const updateSettings = (data: Pick<AppSettings, 'versions_to_keep' | 'quarantine_retention_days'>) =>
+  request<AppSettings>(`${BASE}/settings`, { method: 'PUT', body: JSON.stringify(data) })
 
 // Audit log
 export const listAuditLog = (params?: { job_id?: number; event?: string; limit?: number; offset?: number }) => {

@@ -77,7 +77,7 @@ func run(configPath string) error {
 	manifestStore := manifest.New(database)
 	syncEngine := engine.New(manifestStore)
 	conflictsSvc := conflicts.New(database)
-	versionsSvc := versions.New(database, versionsDir, 30)
+	versionsSvc := versions.New(database, versionsDir)
 	mountsSvc := mounts.New(database, cfg.Auth.JWTSecret)
 	auditSvc := audit.New(database)
 	jobsSvc := jobs.New(database, syncEngine, hub, watcher, versionsSvc, conflictsSvc, mountsSvc, auditSvc)

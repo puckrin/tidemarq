@@ -88,6 +88,13 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/api/v1/mounts/{id}/test", s.handleTestMount)
 		})
 
+		// Settings: read by any authenticated user; write is admin only.
+		r.Get("/api/v1/settings", s.handleGetSettings)
+		r.Group(func(r chi.Router) {
+			r.Use(auth.RequireRole("admin"))
+			r.Put("/api/v1/settings", s.handleUpdateSettings)
+		})
+
 		// Directory browser: all authenticated users can browse.
 		r.Get("/api/v1/browse", s.handleBrowse)
 

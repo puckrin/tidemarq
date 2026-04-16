@@ -25,22 +25,16 @@ const quarantineDirName = ".tidemarq-quarantine"
 
 // Service manages version snapshots and quarantine entries.
 type Service struct {
-	db            *db.DB
-	versionsDir   string
-	retentionDays int
+	db          *db.DB
+	versionsDir string
 }
 
 // New creates a new versions Service.
 // versionsDir is where snapshot files are stored.
-// retentionDays is how long quarantine entries are kept before expiry.
-func New(database *db.DB, versionsDir string, retentionDays int) *Service {
-	if retentionDays <= 0 {
-		retentionDays = 30
-	}
+func New(database *db.DB, versionsDir string) *Service {
 	return &Service{
-		db:            database,
-		versionsDir:   versionsDir,
-		retentionDays: retentionDays,
+		db:          database,
+		versionsDir: versionsDir,
 	}
 }
 
@@ -75,7 +69,7 @@ func (s *Service) Snapshot(ctx context.Context, jobID int64, relPath, destPath, 
 		return nil, err
 	}
 
-	return s.db.CreateFileVersion(ctx, &db.FileVersion{
+	v, err := s.db.CreateFileVersion(ctx, &db.FileVersion{
 		JobID:       jobID,
 		RelPath:     relPath,
 		StoredPath:  storedPath,
@@ -84,6 +78,21 @@ func (s *Service) Snapshot(ctx context.Context, jobID int64, relPath, destPath, 
 		SizeBytes:   info.Size(),
 		ModTime:     info.ModTime(),
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Prune versions beyond the configured limit. Read setting fresh each time
+	// so changes take effect on the next job run without a restart.
+	if settings, sErr := s.db.GetSettings(ctx); sErr == nil {
+		if paths, pErr := s.db.PruneFileVersions(ctx, jobID, relPath, settings.VersionsToKeep); pErr == nil {
+			for _, p := range paths {
+				_ = os.Remove(p)
+			}
+		}
+	}
+
+	return v, nil
 }
 
 // ListVersions returns all stored versions for a file, newest first.
@@ -157,6 +166,12 @@ func (s *Service) Quarantine(ctx context.Context, jobID int64, relPath, destPath
 	// (bottom-up, stopping at destRoot).
 	pruneEmptyDirs(filepath.Dir(destPath), destRoot)
 
+	// Read retention days fresh so changes take effect without a restart.
+	retentionDays := 30
+	if settings, sErr := s.db.GetSettings(ctx); sErr == nil {
+		retentionDays = settings.QuarantineRetentionDays
+	}
+
 	now := time.Now().UTC()
 	return s.db.CreateQuarantineEntry(ctx, &db.QuarantineEntry{
 		JobID:          jobID,
@@ -166,7 +181,7 @@ func (s *Service) Quarantine(ctx context.Context, jobID int64, relPath, destPath
 		HashAlgo:       algo,
 		SizeBytes:      info.Size(),
 		DeletedAt:      now,
-		ExpiresAt:      now.AddDate(0, 0, s.retentionDays),
+		ExpiresAt:      now.AddDate(0, 0, retentionDays),
 	})
 }
 

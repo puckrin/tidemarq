@@ -1,3 +1,9 @@
+export interface AppSettings {
+  versions_to_keep: number
+  quarantine_retention_days: number
+  updated_at: string
+}
+
 export interface Job {
   id: number
   name: string

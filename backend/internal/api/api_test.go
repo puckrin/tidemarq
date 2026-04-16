@@ -398,7 +398,7 @@ func newFullTestServer(t *testing.T) (*httptest.Server, string, string, string) 
 	t.Cleanup(watcher.Close)
 
 	versionsDir := filepath.Join(tmp, "versions")
-	vSvc := versions.New(database, versionsDir, 30)
+	vSvc := versions.New(database, versionsDir)
 	cSvc := conflicts.New(database)
 
 	jobsSvc := jobs.New(database, syncEngine, hub, watcher, vSvc, cSvc, nil, nil)
