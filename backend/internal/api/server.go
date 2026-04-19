@@ -40,6 +40,7 @@ type Server struct {
 	versionsSvc  *versions.Service
 	mountsSvc    *mounts.Service
 	auditSvc     *audit.Service
+	wsNonces     *wsNonceStore
 	startTime    time.Time
 }
 
@@ -65,6 +66,7 @@ func NewServer(
 		versionsSvc:  versionsSvc,
 		mountsSvc:    mountsSvc,
 		auditSvc:     auditSvc,
+		wsNonces:     newWSNonceStore(),
 		startTime:    time.Now(),
 	}
 }

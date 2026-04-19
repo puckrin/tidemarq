@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -66,6 +67,12 @@ func (s *Server) handleResolveConflict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	validActions := map[string]bool{"keep-source": true, "keep-dest": true, "keep-both": true}
+	if !validActions[req.Action] {
+		writeError(w, http.StatusBadRequest, "action must be keep-source, keep-dest, or keep-both", "bad_request")
+		return
+	}
+
 	c, err := s.conflictsSvc.Get(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, conflicts.ErrNotFound) {
@@ -84,7 +91,12 @@ func (s *Server) handleResolveConflict(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.conflictsSvc.Resolve(r.Context(), id, req.Action, filepath.Join(job.SourcePath, c.RelPath), filepath.Join(job.DestinationPath, c.RelPath)); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error(), "bad_request")
+		if errors.Is(err, conflicts.ErrAlreadyResolved) {
+			writeError(w, http.StatusConflict, "conflict is already resolved", "conflict")
+			return
+		}
+		log.Printf("resolve conflict %d: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "failed to resolve conflict", "internal_error")
 		return
 	}
 

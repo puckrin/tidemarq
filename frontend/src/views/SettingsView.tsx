@@ -249,8 +249,8 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
                   <input className="fi" value={newUser.username} onChange={e => setNewUser(u => ({ ...u, username: e.target.value }))}/>
                 </div>
                 <div className="fg" style={{ marginBottom: 0 }}>
-                  <label className="fl">Password</label>
-                  <input className="fi" type="password" value={newUser.password} onChange={e => setNewUser(u => ({ ...u, password: e.target.value }))}/>
+                  <label className="fl">Password <span className="text3">(min 8 characters)</span></label>
+                  <input className="fi" type="password" value={newUser.password} onChange={e => setNewUser(u => ({ ...u, password: e.target.value }))} minLength={8}/>
                 </div>
                 <div className="fg" style={{ marginBottom: 0 }}>
                   <label className="fl">Role</label>
@@ -265,7 +265,7 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
                 <Button
                   variant="primary"
                   onClick={() => addUser.mutate()}
-                  disabled={addUser.isPending || !newUser.username || !newUser.password}
+                  disabled={addUser.isPending || !newUser.username || !newUser.password || newUser.password.length < 8}
                 >
                   {addUser.isPending ? 'Creating…' : 'Create user'}
                 </Button>
@@ -313,7 +313,7 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
                 </select>
               </div>
               <div className="fg" style={{ marginBottom: 0 }}>
-                <label className="fl">New password <span className="text3">(leave blank to keep current)</span></label>
+                <label className="fl">New password <span className="text3">(leave blank to keep current, min 8 characters)</span></label>
                 <input
                   className="fi"
                   type="password"
@@ -321,12 +321,13 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
                   value={editTarget.password}
                   onChange={e => setEditTarget(t => t && ({ ...t, password: e.target.value }))}
                   autoComplete="new-password"
+                  minLength={8}
                 />
               </div>
             </div>
             <div className="modal-acts">
               <Button variant="ghost" onClick={() => setEditTarget(null)}>Cancel</Button>
-              <Button variant="primary" onClick={() => editUser.mutate()} disabled={editUser.isPending}>
+              <Button variant="primary" onClick={() => editUser.mutate()} disabled={editUser.isPending || (editTarget.password.length > 0 && editTarget.password.length < 8)}>
                 {editUser.isPending ? 'Saving…' : 'Save changes'}
               </Button>
             </div>

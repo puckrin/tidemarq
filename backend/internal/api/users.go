@@ -49,6 +49,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username and password are required", "bad_request")
 		return
 	}
+	if len(req.Password) < 8 {
+		writeError(w, http.StatusBadRequest, "password must be at least 8 characters", "bad_request")
+		return
+	}
 	if !validRoles[req.Role] {
 		writeError(w, http.StatusBadRequest, "role must be admin, operator, or viewer", "bad_request")
 		return
@@ -116,6 +120,10 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		params.Username = &req.Username
 	}
 	if req.Password != "" {
+		if len(req.Password) < 8 {
+			writeError(w, http.StatusBadRequest, "password must be at least 8 characters", "bad_request")
+			return
+		}
 		hash, err := auth.HashPassword(req.Password)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to hash password", "internal_error")

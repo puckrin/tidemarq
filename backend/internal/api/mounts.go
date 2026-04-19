@@ -33,7 +33,7 @@ func (s *Server) handleCreateMount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error(), "bad_request")
+		writeError(w, http.StatusInternalServerError, "failed to create mount", "internal_error")
 		return
 	}
 	writeJSON(w, http.StatusCreated, view)

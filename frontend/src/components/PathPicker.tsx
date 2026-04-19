@@ -28,6 +28,19 @@ function isDriveLetter(name: string): boolean {
   return /^[A-Za-z]:$/.test(name)
 }
 
+/** Returns an error string if the typed path is obviously invalid, or null if OK. */
+function pathError(path: string, isMountPath: boolean): string | null {
+  if (!path) return null
+  if (isMountPath) {
+    if (path === '..' || path.startsWith('../')) return 'Path cannot traverse outside the mount root'
+    return null
+  }
+  if (!path.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(path)) {
+    return 'Path must be absolute (e.g. /data/files)'
+  }
+  return null
+}
+
 /**
  * For local FS: compute the child path to navigate into.
  * Handles Windows drive letters specially so "C:" → "C:/".
@@ -314,6 +327,11 @@ export function PathPicker({ value, onChange, label }: Props) {
           <Folder size={14}/> Browse
         </Button>
       </div>
+      {pathError(value.path, value.mountId !== null) && (
+        <div style={{ color: 'var(--coral)', fontSize: 12, marginTop: 4 }}>
+          {pathError(value.path, value.mountId !== null)}
+        </div>
+      )}
 
       {browsing && (
         <DirectoryBrowser

@@ -220,14 +220,14 @@ func TestAdminEndpoint_OperatorToken(t *testing.T) {
 	ts, adminToken := newTestServer(t)
 
 	// Create an operator user.
-	body, _ := json.Marshal(map[string]string{"username": "op1", "password": "oppass", "role": "operator"})
+	body, _ := json.Marshal(map[string]string{"username": "op1", "password": "oppassword", "role": "operator"})
 	resp := doRequest(t, ts, http.MethodPost, "/api/v1/users", &adminToken, bytes.NewReader(body))
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create operator: expected 201, got %d", resp.StatusCode)
 	}
 
-	opToken := mustLogin(t, ts, "op1", "oppass")
+	opToken := mustLogin(t, ts, "op1", "oppassword")
 
 	// Operator should be forbidden from listing users.
 	resp = doRequest(t, ts, http.MethodGet, "/api/v1/users", &opToken, nil)
@@ -240,11 +240,11 @@ func TestAdminEndpoint_OperatorToken(t *testing.T) {
 func TestAdminEndpoint_ViewerToken(t *testing.T) {
 	ts, adminToken := newTestServer(t)
 
-	body, _ := json.Marshal(map[string]string{"username": "viewer1", "password": "viewpass", "role": "viewer"})
+	body, _ := json.Marshal(map[string]string{"username": "viewer1", "password": "viewpasswd", "role": "viewer"})
 	resp := doRequest(t, ts, http.MethodPost, "/api/v1/users", &adminToken, bytes.NewReader(body))
 	resp.Body.Close()
 
-	viewerToken := mustLogin(t, ts, "viewer1", "viewpass")
+	viewerToken := mustLogin(t, ts, "viewer1", "viewpasswd")
 
 	resp = doRequest(t, ts, http.MethodGet, "/api/v1/users", &viewerToken, nil)
 	defer resp.Body.Close()
@@ -259,7 +259,7 @@ func TestUserCRUD(t *testing.T) {
 	ts, adminToken := newTestServer(t)
 
 	// Create.
-	body, _ := json.Marshal(map[string]string{"username": "bob", "password": "bobpass", "role": "operator"})
+	body, _ := json.Marshal(map[string]string{"username": "bob", "password": "bobpasswd", "role": "operator"})
 	resp := doRequest(t, ts, http.MethodPost, "/api/v1/users", &adminToken, bytes.NewReader(body))
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
@@ -328,7 +328,7 @@ func TestUserCRUD(t *testing.T) {
 func TestCreateUser_DuplicateUsername(t *testing.T) {
 	ts, adminToken := newTestServer(t)
 
-	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "pass", "role": "viewer"})
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "testpasswd", "role": "viewer"})
 	resp := doRequest(t, ts, http.MethodPost, "/api/v1/users", &adminToken, bytes.NewReader(body))
 	defer resp.Body.Close()
 
@@ -340,7 +340,7 @@ func TestCreateUser_DuplicateUsername(t *testing.T) {
 func TestCreateUser_InvalidRole(t *testing.T) {
 	ts, adminToken := newTestServer(t)
 
-	body, _ := json.Marshal(map[string]string{"username": "newuser", "password": "pass", "role": "superuser"})
+	body, _ := json.Marshal(map[string]string{"username": "newuser", "password": "testpasswd", "role": "superuser"})
 	resp := doRequest(t, ts, http.MethodPost, "/api/v1/users", &adminToken, bytes.NewReader(body))
 	defer resp.Body.Close()
 

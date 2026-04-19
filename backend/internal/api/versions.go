@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -57,7 +58,8 @@ func (s *Server) handleRestoreVersion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.versionsSvc.RestoreVersion(r.Context(), id, job.DestinationPath); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error(), "internal_error")
+		log.Printf("restore version %d: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "failed to restore version", "internal_error")
 		return
 	}
 
@@ -138,7 +140,8 @@ func (s *Server) handleDeleteQuarantine(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusNotFound, "quarantine entry not found", "not_found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error(), "internal_error")
+		log.Printf("delete quarantine %d: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "failed to delete quarantine entry", "internal_error")
 		return
 	}
 
@@ -169,7 +172,8 @@ func (s *Server) handleRestoreQuarantine(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := s.versionsSvc.RestoreQuarantine(r.Context(), id, job.DestinationPath); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error(), "internal_error")
+		log.Printf("restore quarantine %d: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "failed to restore quarantine entry", "internal_error")
 		return
 	}
 

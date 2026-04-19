@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"path"
+	"strings"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -92,15 +93,49 @@ func NewSFTP(cfg SFTPConfig) (*SFTPFS, error) {
 	return &SFTPFS{client: client, sshc: sshc, root: root}, nil
 }
 
-func (s *SFTPFS) absPath(relPath string) string {
+// absPath joins relPath onto the SFTP root and verifies the result is still
+// within root. It returns an error for traversal attempts such as "../../etc".
+//
+// root may be absolute ("/remote/backups") or relative (".").
+// path.Join is used throughout because SFTP paths are always POSIX.
+func (s *SFTPFS) absPath(relPath string) (string, error) {
 	if relPath == "" || relPath == "." {
-		return s.root
+		return s.root, nil
 	}
-	return path.Join(s.root, relPath)
+	joined := path.Join(s.root, relPath)
+	if !sftpPathInRoot(joined, s.root) {
+		return "", fmt.Errorf("path %q escapes SFTP mount root", relPath)
+	}
+	return joined, nil
+}
+
+// sftpPathInRoot reports whether joined (the result of path.Join(root, rel))
+// is still within root. Both arguments must already be path.Clean()'d.
+//
+// Three cases:
+//   - root == "/" : the entire server is accessible; any absolute path is valid.
+//   - root == "." : the server's working directory is the root; anything that
+//     does not start with ".." is valid.
+//   - absolute or relative root : joined must equal root or start with root+"/".
+func sftpPathInRoot(joined, root string) bool {
+	root = path.Clean(root)
+	joined = path.Clean(joined)
+	switch root {
+	case "/":
+		return strings.HasPrefix(joined, "/")
+	case ".":
+		return joined != ".." && !strings.HasPrefix(joined, "../")
+	default:
+		return joined == root || strings.HasPrefix(joined, root+"/")
+	}
 }
 
 func (s *SFTPFS) Stat(relPath string) (FileInfo, error) {
-	fi, err := s.client.Stat(s.absPath(relPath))
+	p, err := s.absPath(relPath)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	fi, err := s.client.Stat(p)
 	if err != nil {
 		return FileInfo{}, err
 	}
@@ -114,7 +149,11 @@ func (s *SFTPFS) Stat(relPath string) (FileInfo, error) {
 }
 
 func (s *SFTPFS) ReadDir(relPath string) ([]FileInfo, error) {
-	entries, err := s.client.ReadDir(s.absPath(relPath))
+	p, err := s.absPath(relPath)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := s.client.ReadDir(p)
 	if err != nil {
 		return nil, err
 	}
@@ -132,11 +171,18 @@ func (s *SFTPFS) ReadDir(relPath string) ([]FileInfo, error) {
 }
 
 func (s *SFTPFS) Open(relPath string) (io.ReadCloser, error) {
-	return s.client.Open(s.absPath(relPath))
+	p, err := s.absPath(relPath)
+	if err != nil {
+		return nil, err
+	}
+	return s.client.Open(p)
 }
 
 func (s *SFTPFS) Create(relPath string) (io.WriteCloser, error) {
-	p := s.absPath(relPath)
+	p, err := s.absPath(relPath)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.client.MkdirAll(path.Dir(p)); err != nil {
 		return nil, err
 	}
@@ -144,15 +190,31 @@ func (s *SFTPFS) Create(relPath string) (io.WriteCloser, error) {
 }
 
 func (s *SFTPFS) MkdirAll(relPath string) error {
-	return s.client.MkdirAll(s.absPath(relPath))
+	p, err := s.absPath(relPath)
+	if err != nil {
+		return err
+	}
+	return s.client.MkdirAll(p)
 }
 
 func (s *SFTPFS) Remove(relPath string) error {
-	return s.client.Remove(s.absPath(relPath))
+	p, err := s.absPath(relPath)
+	if err != nil {
+		return err
+	}
+	return s.client.Remove(p)
 }
 
 func (s *SFTPFS) Rename(oldPath, newPath string) error {
-	return s.client.Rename(s.absPath(oldPath), s.absPath(newPath))
+	old, err := s.absPath(oldPath)
+	if err != nil {
+		return err
+	}
+	nw, err := s.absPath(newPath)
+	if err != nil {
+		return err
+	}
+	return s.client.Rename(old, nw)
 }
 
 func (s *SFTPFS) Close() error {

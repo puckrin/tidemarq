@@ -31,7 +31,7 @@ auth:
 
 admin:
   # Credentials for the built-in admin account created on first start.
-  # REQUIRED — password must not be left empty.
+  # REQUIRED — password must be at least 8 characters and must not be left empty.
   # Environment variable: TIDEMARQ_ADMIN_PASSWORD
   username: admin
   password: ""

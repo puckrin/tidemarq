@@ -70,22 +70,58 @@ func NewSMB(cfg SMBConfig) (*SMBFS, error) {
 	return &SMBFS{conn: conn, sess: sess, share: share, root: root}, nil
 }
 
-func (s *SMBFS) winPath(relPath string) string {
+// winPath joins relPath onto the SMB root, verifies the result is still within
+// root, then converts POSIX separators to Windows backslashes as required by
+// the SMB client library.
+//
+// root is always a relative POSIX path within the share (e.g. "backups/logs"
+// or "."). path.Join is used internally; strings.ReplaceAll converts the
+// result for the SMB wire protocol.
+func (s *SMBFS) winPath(relPath string) (string, error) {
 	if relPath == "" || relPath == "." {
 		if s.root == "." {
-			return ""
+			return "", nil
 		}
-		return strings.ReplaceAll(s.root, "/", `\`)
+		return strings.ReplaceAll(s.root, "/", `\`), nil
 	}
-	p := path.Join(s.root, relPath)
-	if p == "." {
-		return ""
+
+	joined := path.Join(s.root, relPath)
+
+	// Verify the joined path hasn't escaped the root. SMB roots are always
+	// relative (within a share), so we use the relative-root confinement check.
+	if !smbPathInRoot(joined, s.root) {
+		return "", fmt.Errorf("path %q escapes SMB mount root", relPath)
 	}
-	return strings.ReplaceAll(p, "/", `\`)
+
+	if joined == "." {
+		return "", nil
+	}
+	return strings.ReplaceAll(joined, "/", `\`), nil
+}
+
+// smbPathInRoot reports whether joined is still within root. Both are relative
+// POSIX paths (within an SMB share); path.Join has already cleaned them.
+//
+// Two cases:
+//   - root == "." : the share root; joined must not start with "..".
+//   - any other  : joined must equal root or start with root+"/".
+func smbPathInRoot(joined, root string) bool {
+	root = path.Clean(root)
+	joined = path.Clean(joined)
+	switch root {
+	case ".":
+		return joined != ".." && !strings.HasPrefix(joined, "../")
+	default:
+		return joined == root || strings.HasPrefix(joined, root+"/")
+	}
 }
 
 func (s *SMBFS) Stat(relPath string) (FileInfo, error) {
-	fi, err := s.share.Stat(s.winPath(relPath))
+	p, err := s.winPath(relPath)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	fi, err := s.share.Stat(p)
 	if err != nil {
 		return FileInfo{}, err
 	}
@@ -99,7 +135,11 @@ func (s *SMBFS) Stat(relPath string) (FileInfo, error) {
 }
 
 func (s *SMBFS) ReadDir(relPath string) ([]FileInfo, error) {
-	entries, err := s.share.ReadDir(s.winPath(relPath))
+	p, err := s.winPath(relPath)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := s.share.ReadDir(p)
 	if err != nil {
 		return nil, err
 	}
@@ -117,11 +157,18 @@ func (s *SMBFS) ReadDir(relPath string) ([]FileInfo, error) {
 }
 
 func (s *SMBFS) Open(relPath string) (io.ReadCloser, error) {
-	return s.share.Open(s.winPath(relPath))
+	p, err := s.winPath(relPath)
+	if err != nil {
+		return nil, err
+	}
+	return s.share.Open(p)
 }
 
 func (s *SMBFS) Create(relPath string) (io.WriteCloser, error) {
-	p := s.winPath(relPath)
+	p, err := s.winPath(relPath)
+	if err != nil {
+		return nil, err
+	}
 	// Ensure parent directory exists.
 	parentDir := path.Dir(strings.ReplaceAll(p, `\`, "/"))
 	if parentDir != "" && parentDir != "." {
@@ -133,15 +180,31 @@ func (s *SMBFS) Create(relPath string) (io.WriteCloser, error) {
 }
 
 func (s *SMBFS) MkdirAll(relPath string) error {
-	return s.share.MkdirAll(s.winPath(relPath), 0o755)
+	p, err := s.winPath(relPath)
+	if err != nil {
+		return err
+	}
+	return s.share.MkdirAll(p, 0o755)
 }
 
 func (s *SMBFS) Remove(relPath string) error {
-	return s.share.Remove(s.winPath(relPath))
+	p, err := s.winPath(relPath)
+	if err != nil {
+		return err
+	}
+	return s.share.Remove(p)
 }
 
 func (s *SMBFS) Rename(oldPath, newPath string) error {
-	return s.share.Rename(s.winPath(oldPath), s.winPath(newPath))
+	old, err := s.winPath(oldPath)
+	if err != nil {
+		return err
+	}
+	nw, err := s.winPath(newPath)
+	if err != nil {
+		return err
+	}
+	return s.share.Rename(old, nw)
 }
 
 func (s *SMBFS) Close() error {

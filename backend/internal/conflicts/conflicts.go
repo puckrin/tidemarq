@@ -17,6 +17,9 @@ import (
 // ErrNotFound is returned when a conflict record does not exist.
 var ErrNotFound = errors.New("conflict not found")
 
+// ErrAlreadyResolved is returned when Resolve is called on a non-pending conflict.
+var ErrAlreadyResolved = errors.New("conflict is already resolved")
+
 // FileState holds the current on-disk state of one side of a file.
 type FileState struct {
 	AbsPath     string
@@ -125,7 +128,7 @@ func (s *Service) Resolve(ctx context.Context, id int64, action, srcPath, destPa
 		return err
 	}
 	if c.Status != "pending" {
-		return fmt.Errorf("conflict %d is already resolved", id)
+		return ErrAlreadyResolved
 	}
 
 	switch action {

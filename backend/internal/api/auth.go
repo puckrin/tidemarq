@@ -26,7 +26,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	user, err := s.db.GetUserByUsername(r.Context(), req.Username)
 	if err != nil {
-		// Constant-time response to prevent username enumeration.
+		// Run bcrypt against a dummy hash so the response time is
+		// indistinguishable from a valid username with a wrong password.
+		// Without this, timing alone reveals whether a username exists.
+		auth.CheckPasswordDummy(req.Password)
 		writeError(w, http.StatusUnauthorized, "invalid credentials", "invalid_credentials")
 		return
 	}

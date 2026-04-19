@@ -3,10 +3,12 @@ package api
 import (
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // browseEntry is one item returned by the browse API.
@@ -54,6 +56,14 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	abs := filepath.Clean(filepath.FromSlash(browsePath))
+
+	// Reject relative paths. filepath.Clean leaves relative paths relative, so
+	// a caller supplying "../../etc" would otherwise resolve against the process
+	// CWD rather than any intentional root.
+	if !filepath.IsAbs(abs) {
+		writeError(w, http.StatusBadRequest, "path must be absolute", "bad_request")
+		return
+	}
 
 	entries, err := os.ReadDir(abs)
 	if err != nil {
@@ -107,14 +117,29 @@ func (s *Server) handleBrowseDrives(w http.ResponseWriter) {
 }
 
 func (s *Server) handleBrowseMount(w http.ResponseWriter, r *http.Request, mountIDStr, browsePath string) {
-	if s.mountsSvc == nil {
-		writeError(w, http.StatusServiceUnavailable, "mounts service not available", "service_unavailable")
-		return
-	}
-
 	mountID, err := strconv.ParseInt(mountIDStr, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mount_id", "bad_request")
+		return
+	}
+
+	// Normalise and validate the relative path first — pure string operation,
+	// no connection needed. A cleaned path starting with ".." would escape the
+	// mount root when joined inside ReadDir.
+	if browsePath == "/" {
+		browsePath = ""
+	}
+	if browsePath != "" {
+		cleaned := path.Clean(browsePath)
+		if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+			writeError(w, http.StatusBadRequest, "invalid path", "bad_request")
+			return
+		}
+		browsePath = cleaned
+	}
+
+	if s.mountsSvc == nil {
+		writeError(w, http.StatusServiceUnavailable, "mounts service not available", "service_unavailable")
 		return
 	}
 
@@ -124,10 +149,6 @@ func (s *Server) handleBrowseMount(w http.ResponseWriter, r *http.Request, mount
 		return
 	}
 	defer mfs.Close()
-
-	if browsePath == "/" {
-		browsePath = ""
-	}
 
 	entries, err := mfs.ReadDir(browsePath)
 	if err != nil {
