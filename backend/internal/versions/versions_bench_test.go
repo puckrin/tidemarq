@@ -232,8 +232,12 @@ func TestExpireQuarantine_Correctness(t *testing.T) {
 	elapsed := time.Since(start)
 	t.Logf("ExpireQuarantine(10k expired): %v", elapsed)
 
-	if elapsed > time.Second {
-		t.Errorf("sweep took %v, want < 1s", elapsed)
+	limit := time.Second
+	if raceEnabled {
+		limit = 10 * time.Second // race detector adds ~5-10x overhead
+	}
+	if elapsed > limit {
+		t.Errorf("sweep took %v, want < %v", elapsed, limit)
 	}
 
 	// Only the nActive entries should remain.
