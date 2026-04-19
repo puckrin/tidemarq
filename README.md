@@ -77,11 +77,49 @@ npm install && npm run dev
 ### First start
 
 On first start tidemarq will:
-- Create a default admin account (username `admin`, password from config or `TIDEMARQ_ADMIN_PASSWORD`)
+- Create a default admin account — username `admin`, password `admin123` (or the value of `TIDEMARQ_ADMIN_PASSWORD` if set). **Change this immediately after login via Settings → Users.**
 - Auto-generate a TLS certificate if none is configured
 - Auto-generate a JWT signing secret stored in `<data_dir>/.jwt_secret`
 
 No manual token generation is required.
+
+### Persistent data
+
+All application data — the database, TLS certificates, JWT secret, version history, and quarantine — is stored under `./data` on the host (created automatically on first start):
+
+```
+tidemarq/
+└── data/
+    ├── tidemarq.db
+    ├── .jwt_secret
+    ├── certs/
+    │   ├── server.crt
+    │   └── server.key
+    ├── versions/
+    └── .tidemarq-quarantine/
+```
+
+This directory survives container restarts and rebuilds. To reset to a clean state, stop the stack and delete `./data`.
+
+### Exposing host directories to sync jobs
+
+To make directories on the host available as sync sources or destinations, add bind mounts to `docker-compose.yml` below the `./data` line:
+
+```yaml
+volumes:
+  - ./data:/data
+
+  # Add your directories here:
+  - /srv/media:/mnt/media
+  - /srv/documents:/mnt/documents:ro   # :ro = read-only (recommended for source-only paths)
+  - /srv/backups:/mnt/backups
+```
+
+The container paths (right-hand side, e.g. `/mnt/media`) are what you enter as source or destination paths when creating a sync job in the UI. Restart the stack after editing:
+
+```bash
+docker compose up --build
+```
 
 ---
 

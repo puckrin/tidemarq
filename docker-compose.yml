@@ -5,10 +5,19 @@ services:
       - "8716:8716"
       - "8717:8717"
     volumes:
-      - tidemarq_data:/data
+      # Persistent application data: database, TLS certs, JWT secret, version history, quarantine.
+      - ./data:/data
+
+      # Add bind mounts below to expose host directories to tidemarq as local filesystem paths.
+      # These paths will be browsable and selectable as job sources or destinations in the UI.
+      # Format: /host/path:/container/path
+      # Append :ro to make a mount read-only (recommended for source-only directories).
+      #
+      # Examples:
+      #   - /srv/media:/mnt/media
+      #   - /srv/documents:/mnt/documents:ro
+      #   - /srv/backups:/mnt/backups
+
     environment:
       - TIDEMARQ_CONFIG=/etc/tidemarq/tidemarq.yaml
     restart: unless-stopped
-
-volumes:
-  tidemarq_data:

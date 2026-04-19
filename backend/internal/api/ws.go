@@ -34,8 +34,23 @@ var upgrader = websocket.Upgrader{
 		if err != nil {
 			return false
 		}
-		// Reject if the origin host does not match the host the client connected to.
-		return strings.EqualFold(u.Host, r.Host)
+		// In production the origin and request hosts match exactly.
+		if strings.EqualFold(u.Host, r.Host) {
+			return true
+		}
+		// During local development the Vite dev server proxies WebSocket
+		// connections from a different port (e.g. localhost:5174 → localhost:8443).
+		// The browser sends the Vite origin, but the backend sees its own host.
+		// Allow any localhost-to-localhost connection regardless of port so the
+		// dev proxy works without weakening same-origin protection in production.
+		originHost := u.Hostname()
+		requestHost := r.Host
+		if i := strings.LastIndex(requestHost, ":"); i != -1 {
+			requestHost = requestHost[:i]
+		}
+		isLocalOrigin := originHost == "localhost" || originHost == "127.0.0.1"
+		isLocalRequest := requestHost == "localhost" || requestHost == "127.0.0.1"
+		return isLocalOrigin && isLocalRequest
 	},
 }
 
@@ -119,7 +134,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	s.hub.Register(conn)
+	unregister := s.hub.Register(conn)
+	defer unregister()
 
 	// Keep the connection alive; discard any incoming messages.
 	for {
