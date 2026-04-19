@@ -254,3 +254,4 @@ The following describes the current implemented state of the application. Use th
 - Do not write to the destination filesystem outside of the engine package.
 - Do not add cloud storage destinations (out of scope for v1.0, per spec §1.3).
 - Do not skip soft delete and go straight to permanent deletion.
+- Do not implement CDC chunking/deduplication (`internal/chunker`, `internal/chunkstore`, `UseCDC`). Decided against — CDC benefits backup tools, not sync products. Delta transfer already satisfies §3.4.

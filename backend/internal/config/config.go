@@ -59,7 +59,7 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("auth.jwt_secret", "")
 	v.SetDefault("auth.jwt_ttl", 24*time.Hour)
 	v.SetDefault("admin.username", "admin")
-	v.SetDefault("admin.password", "admin")
+	v.SetDefault("admin.password", "admin123")
 
 	if path != "" {
 		v.SetConfigFile(path)

@@ -102,6 +102,10 @@ func seedAdmin(database *db.DB, cfg *config.Config) error {
 		return nil
 	}
 
+	if len(cfg.Admin.Password) < 8 {
+		return fmt.Errorf("admin.password must be at least 8 characters (got %d)", len(cfg.Admin.Password))
+	}
+
 	log.Printf("no users found — creating default admin account (%q)", cfg.Admin.Username)
 
 	hash, err := auth.HashPassword(cfg.Admin.Password)

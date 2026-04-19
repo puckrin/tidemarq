@@ -119,7 +119,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	s.hub.Register(conn)
+	unregister := s.hub.Register(conn)
+	defer unregister()
 
 	// Keep the connection alive; discard any incoming messages.
 	for {

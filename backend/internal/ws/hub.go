@@ -49,9 +49,12 @@ func New() *Hub {
 	return &Hub{clients: make(map[*client]struct{})}
 }
 
-// Register adds a WebSocket connection to the hub and starts its write pump.
-// The caller must have performed the HTTP upgrade before calling Register.
-func (h *Hub) Register(conn wsConn) {
+// Register adds a WebSocket connection to the hub, starts its write pump, and
+// returns an unregister function. The caller must defer the returned function so
+// that the write pump goroutine is stopped and the client is removed from the hub
+// when the read loop exits — preventing zombie connections that accumulate until
+// a Broadcast write attempt against a half-closed TCP connection sends a RST.
+func (h *Hub) Register(conn wsConn) (unregister func()) {
 	c := &client{conn: conn, sendCh: make(chan []byte, 64)}
 
 	h.mu.Lock()
@@ -63,6 +66,15 @@ func (h *Hub) Register(conn wsConn) {
 		delete(h.clients, c)
 		h.mu.Unlock()
 	})
+
+	return func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if _, ok := h.clients[c]; ok {
+			close(c.sendCh)
+			delete(h.clients, c)
+		}
+	}
 }
 
 // Broadcast sends e to all connected clients. Clients that cannot keep up are dropped.

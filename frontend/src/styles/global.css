@@ -48,6 +48,7 @@ body {
 
 /* ── BUTTONS ─────────────────────────────────────────── */
 .btn { display: inline-flex; align-items: center; gap: 7px; padding: 8px 16px; border-radius: var(--radius); font-family: Arial, sans-serif; font-size: 14px; font-weight: 500; cursor: pointer; border: none; transition: background .12s, opacity .12s; white-space: nowrap; line-height: 1; }
+.btn svg { display: block; flex-shrink: 0; transform: translateY(-1px); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn:active:not(:disabled) { transform: translateY(1px); }
 .btn-sm { padding: 5px 11px; font-size: 12px; }
