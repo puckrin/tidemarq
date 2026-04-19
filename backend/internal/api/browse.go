@@ -52,7 +52,7 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	// On Windows, a bare drive letter without a separator (e.g. "C:") should
 	// resolve to the drive root, not the current working directory on that drive.
 	if runtime.GOOS == "windows" && len(browsePath) == 2 && browsePath[1] == ':' {
-		browsePath = browsePath + "/"
+		browsePath += "/"
 	}
 
 	abs := filepath.Clean(filepath.FromSlash(browsePath))
