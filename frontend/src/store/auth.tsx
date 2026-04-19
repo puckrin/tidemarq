@@ -19,7 +19,7 @@ const Ctx = createContext<AuthContext | null>(null)
 
 function parseToken(token: string): AuthUser | null {
   try {
-    const payload = JSON.parse(atob(token.split('.')[1]))
+    const payload = JSON.parse(atob(token.split('.')[1] ?? '')) as { user_id: number; username: string; role: string }
     return { id: payload.user_id, username: payload.username, role: payload.role }
   } catch {
     return null

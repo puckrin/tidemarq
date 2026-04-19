@@ -240,13 +240,13 @@ export function MountsView() {
                   {m.type === 'smb' && m.smb_share ? ` / ${m.smb_share}` : ''}
                   {m.username ? ` · ${m.username}` : ''}
                 </div>
-                {testResult[m.id] && (
+                {(() => { const tr = testResult[m.id]; return tr && (
                   <div style={{ marginTop: 4, fontSize: 12 }}>
-                    {testResult[m.id].ok
+                    {tr.ok
                       ? <span style={{ color: 'var(--grass-light)' }}><Check size={11} style={{ display: 'inline' }}/> Reachable</span>
-                      : <span style={{ color: 'var(--coral-light)' }}><X size={11} style={{ display: 'inline' }}/> {testResult[m.id].error}</span>}
+                      : <span style={{ color: 'var(--coral-light)' }}><X size={11} style={{ display: 'inline' }}/> {tr.error}</span>}
                   </div>
-                )}
+                )})()}
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                 <Button variant="ghost" size="sm"

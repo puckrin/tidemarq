@@ -29,7 +29,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     let code = 'unknown'
     let message = res.statusText
     try {
-      const body = await res.json()
+      const body = await res.json() as { code?: string; error?: string }
       code = body.code ?? code
       message = body.error ?? message
     } catch { /* ignore */ }

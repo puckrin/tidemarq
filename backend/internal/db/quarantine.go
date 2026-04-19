@@ -140,6 +140,49 @@ func (db *DB) ClearRemovedQuarantineEntries(ctx context.Context, jobID int64) er
 	return err
 }
 
+// DeleteExpiredQuarantineEntries removes all active quarantine entries whose
+// retention period has elapsed. It returns the quarantine_path of each deleted
+// row so the caller can remove the corresponding files from disk.
+// The SELECT and DELETE execute in a single transaction so no rows can be
+// inserted or modified between the two operations.
+func (db *DB) DeleteExpiredQuarantineEntries(ctx context.Context) ([]string, error) {
+	now := time.Now().UTC()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT quarantine_path FROM quarantine_entries
+		 WHERE status = 'active' AND expires_at <= ?`, now)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM quarantine_entries WHERE status = 'active' AND expires_at <= ?`, now,
+	); err != nil {
+		return nil, err
+	}
+
+	return paths, tx.Commit()
+}
+
 func scanQuarantineRows(rows *sql.Rows) ([]*QuarantineEntry, error) {
 	var out []*QuarantineEntry
 	for rows.Next() {

@@ -83,10 +83,10 @@ describe('ConflictCard', () => {
   it('clicking the selected row again closes the detail panel', () => {
     render(<ConflictCard conflicts={[makeConflict()]} onChanged={() => {}} />, { wrapper })
     // First click opens panel — path appears in both table row and detail header.
-    fireEvent.click(screen.getAllByText('docs/report.pdf')[0])
+    fireEvent.click(screen.getAllByText('docs/report.pdf')[0]!)
     expect(screen.getByText('Keep source')).toBeInTheDocument()
     // Second click on the table row closes the panel.
-    fireEvent.click(screen.getAllByText('docs/report.pdf')[0])
+    fireEvent.click(screen.getAllByText('docs/report.pdf')[0]!)
     expect(screen.queryByText('Keep source')).toBeNull()
   })
 

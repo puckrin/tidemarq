@@ -5,12 +5,9 @@ import (
 	"time"
 )
 
-// errPaused is returned by throttledReader when a pause signal is received mid-transfer.
-var errPaused = io.EOF // treated as clean stop; caller checks result.Paused
-
 // throttledReader wraps an io.Reader, limits throughput to rateKBs KB/s, and
 // checks pauseCh before each chunk. A closed pauseCh causes Read to return
-// (0, errPaused) so the copy loop stops cleanly at a chunk boundary.
+// (0, io.EOF) so the copy loop stops cleanly at a chunk boundary.
 type throttledReader struct {
 	r       io.Reader
 	rateKBs int64

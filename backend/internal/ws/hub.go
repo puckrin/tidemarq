@@ -23,9 +23,17 @@ type Event struct {
 	Message      string  `json:"message,omitempty"`
 }
 
+// wsConn is the subset of *websocket.Conn used by the hub.
+// Defined as an interface so tests can inject a fast in-memory substitute
+// without starting a real WebSocket server.
+type wsConn interface {
+	WriteMessage(messageType int, data []byte) error
+	Close() error
+}
+
 // client wraps a WebSocket connection with a send channel.
 type client struct {
-	conn   *websocket.Conn
+	conn   wsConn
 	sendCh chan []byte
 }
 
@@ -43,7 +51,7 @@ func New() *Hub {
 
 // Register adds a WebSocket connection to the hub and starts its write pump.
 // The caller must have performed the HTTP upgrade before calling Register.
-func (h *Hub) Register(conn *websocket.Conn) {
+func (h *Hub) Register(conn wsConn) {
 	c := &client{conn: conn, sendCh: make(chan []byte, 64)}
 
 	h.mu.Lock()

@@ -1,0 +1,23 @@
+linters:
+  enable:
+    - errcheck
+    - staticcheck
+    - govet
+    - gosimple
+    - ineffassign
+    - unused
+    - gocritic
+    - nolintlint
+
+linters-settings:
+  errcheck:
+    # Ignore error returns on best-effort cleanup calls that are already
+    # explicitly discarded with _ = ... and annotated //nolint:errcheck.
+    check-blank: false
+
+issues:
+  exclude-rules:
+    # Table-driven tests use t.Fatal which errcheck flags on deferred closes.
+    - path: "_test\\.go"
+      linters: [errcheck]
+      text: "Error return value of .*(Close|Rollback|Remove|Rename)"

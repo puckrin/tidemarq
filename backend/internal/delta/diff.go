@@ -86,10 +86,15 @@ func Diff(r io.Reader, sig *Signature) ([]Op, DiffStats, error) {
 	rolling := NewRolling(blockSize)
 	i := 0
 
+	// Seed the rolling window with the first full block so that subsequent
+	// misses only need a single Roll() call rather than a full Reset+Write.
+	if len(src) >= blockSize {
+		rolling.Write(src[0:blockSize])
+	}
+
 	for i < len(src) {
 		// Can we form a full block starting at i?
-		end := i + blockSize
-		if end > len(src) {
+		if i+blockSize > len(src) {
 			// Remaining bytes are smaller than one block.
 			// Try to match them against the signature's own partial last block
 			// (which may be shorter than blockSize) before falling back to literals.
@@ -114,15 +119,12 @@ func Diff(r io.Reader, sig *Signature) ([]Op, DiffStats, error) {
 			break
 		}
 
-		block := src[i : i+blockSize]
-
-		// Compute weak checksum for this block.
-		rolling.Reset()
-		rolling.Write(block)
+		// rolling.Sum32() always represents src[i:i+blockSize] at this point.
 		weak := rolling.Sum32()
 
 		// Quick weak-hash check before the more expensive strong hash.
 		if _, exists := sig.index[weak]; exists {
+			block := src[i : i+blockSize]
 			strong := blake3strong(block)
 			if match := sig.lookup(weak, strong); match != nil {
 				flushLiterals()
@@ -135,6 +137,11 @@ func Diff(r io.Reader, sig *Signature) ([]Op, DiffStats, error) {
 						prev.Length += match.Length
 						stats.CopyBytes += int64(match.Length)
 						i += blockSize
+						// Re-seed for the new block position.
+						rolling.Reset()
+						if i+blockSize <= len(src) {
+							rolling.Write(src[i : i+blockSize])
+						}
 						continue
 					}
 				}
@@ -146,13 +153,24 @@ func Diff(r io.Reader, sig *Signature) ([]Op, DiffStats, error) {
 				stats.CopyBytes += int64(match.Length)
 				stats.OpsTotal++
 				i += blockSize
+				// Re-seed for the new block position.
+				rolling.Reset()
+				if i+blockSize <= len(src) {
+					rolling.Write(src[i : i+blockSize])
+				}
 				continue
 			}
 		}
 
-		// No match — accumulate as literal and advance by one byte.
+		// No match — accumulate as literal and slide the window one byte forward.
+		// Roll() evicts src[i] and brings in src[i+blockSize], giving the checksum
+		// of src[i+1:i+1+blockSize] ready for the next iteration. This is O(1)
+		// versus the previous Reset+Write which was O(blockSize) per miss.
 		literals = append(literals, src[i])
 		i++
+		if i+blockSize-1 < len(src) {
+			rolling.Roll(src[i+blockSize-1])
+		}
 	}
 
 	flushLiterals()

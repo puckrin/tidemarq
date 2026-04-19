@@ -369,7 +369,7 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 	srcFS, dstFS, fsErr := s.openJobFS(ctx, job)
 	if fsErr != nil {
 		msg := fsErr.Error()
-		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "error", &msg, true)
+		_ = s.db.UpdateJobStatus(ctx, job.ID, "error", &msg, true)
 		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
 		return
 	}

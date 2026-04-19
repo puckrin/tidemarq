@@ -248,16 +248,16 @@ func copyFile(src, dst string) error {
 
 	if _, err := io.Copy(out, in); err != nil {
 		out.Close()
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := out.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	// On Windows, Rename fails if the destination already exists.
 	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return os.Rename(tmpPath, dst)

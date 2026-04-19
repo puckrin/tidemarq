@@ -25,8 +25,17 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: backend
+          version: v1.64.8
+
       - name: Test
         run: go test ./...
+
+      - name: Test (race detector)
+        run: go test -race ./...
 
       - name: Build
         run: CGO_ENABLED=0 go build ./cmd/tidemarq
@@ -49,6 +58,9 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      - name: Lint
+        run: npm run lint
 
       - name: Type-check
         run: npm run build

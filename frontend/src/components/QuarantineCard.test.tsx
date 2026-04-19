@@ -127,7 +127,7 @@ describe('QuarantineCard', () => {
     // Two "Delete all" buttons now exist: the toolbar button and the modal confirm.
     // The modal confirm is the last one in DOM order.
     const deleteAllButtons = screen.getAllByRole('button', { name: 'Delete all' })
-    fireEvent.click(deleteAllButtons[deleteAllButtons.length - 1])
+    fireEvent.click(deleteAllButtons[deleteAllButtons.length - 1]!)
     await waitFor(() => {
       expect(mockDelete).toHaveBeenCalledWith(10)
       expect(mockDelete).toHaveBeenCalledWith(20)

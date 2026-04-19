@@ -47,9 +47,10 @@ function useIsDefaultPassword(users: User[]) {
 
   useEffect(() => {
     if (sessionStorage.getItem(SEEN_KEY)) return
-    const onlyAdmin = users.length === 1 && users[0].username === 'admin'
+    const first = users[0]
+    const onlyAdmin = users.length === 1 && first?.username === 'admin'
     if (!onlyAdmin) { sessionStorage.setItem(SEEN_KEY, '1'); return }
-    const createdAt = new Date(users[0].created_at).getTime()
+    const createdAt = new Date(first!.created_at).getTime()
     const ageMs = Date.now() - createdAt
     if (ageMs < 5 * 60 * 1000) setShow(true)   // within 5 min of first start
   }, [users])

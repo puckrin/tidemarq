@@ -147,8 +147,12 @@ func TestDiffCompletelyDifferent(t *testing.T) {
 	blockSize := 32
 	basis := make([]byte, 512)
 	source := make([]byte, 512)
-	rand.Read(basis)
-	rand.Read(source)
+	if _, err := rand.Read(basis); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rand.Read(source); err != nil {
+		t.Fatal(err)
+	}
 
 	sig, _ := ComputeSignature(bytes.NewReader(basis), blockSize)
 	_, stats, err := Diff(bytes.NewReader(source), sig)
@@ -195,8 +199,12 @@ func TestApplyRoundtrip(t *testing.T) {
 	destPath := filepath.Join(dir, "dest.dat")
 
 	basis := []byte(strings.Repeat("hello world ", 50))
-	os.WriteFile(basisPath, basis, 0o644)
-	os.WriteFile(destPath, basis, 0o644) // dest starts identical
+	if err := os.WriteFile(basisPath, basis, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destPath, basis, 0o644); err != nil { // dest starts identical
+		t.Fatal(err)
+	}
 
 	// Modify middle portion.
 	source := append([]byte{}, basis...)
@@ -227,8 +235,12 @@ func TestApplyEmptyOps(t *testing.T) {
 	basisPath := filepath.Join(dir, "basis.dat")
 	destPath := filepath.Join(dir, "dest.dat")
 
-	os.WriteFile(basisPath, []byte("some content"), 0o644)
-	os.WriteFile(destPath, []byte("some content"), 0o644)
+	if err := os.WriteFile(basisPath, []byte("some content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destPath, []byte("some content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := Apply(basisPath, destPath, nil); err != nil {
 		t.Fatalf("Apply with nil ops: %v", err)
@@ -246,7 +258,9 @@ func TestApplyPreservesOriginalOnError(t *testing.T) {
 	destPath := filepath.Join(dir, "dest.dat")
 
 	original := []byte("original content")
-	os.WriteFile(destPath, original, 0o644)
+	if err := os.WriteFile(destPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// basis doesn't exist — Apply must fail.
 	err := Apply(basisPath, destPath, []Op{{Type: OpCopy, Offset: 0, Length: 5}})
@@ -282,8 +296,12 @@ func TestEndToEnd_SmallEdit(t *testing.T) {
 	// Overwrite bytes 500–520 (middle of the file).
 	copy(source[500:], []byte("** MODIFIED REGION **"))
 
-	os.WriteFile(basisPath, basis, 0o644)
-	os.WriteFile(destPath, basis, 0o644)
+	if err := os.WriteFile(basisPath, basis, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destPath, basis, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	sig, err := ComputeSignatureFile(basisPath, 64)
 	if err != nil {
@@ -320,7 +338,9 @@ func TestEndToEnd_Idempotent(t *testing.T) {
 	path := filepath.Join(dir, "file.dat")
 
 	data := []byte(strings.Repeat("idempotent sync content line\n", 50))
-	os.WriteFile(path, data, 0o644)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	sig, _ := ComputeSignatureFile(path, 32)
 	ops, stats, _ := Diff(bytes.NewReader(data), sig)

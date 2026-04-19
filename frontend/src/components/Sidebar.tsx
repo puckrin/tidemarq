@@ -92,10 +92,10 @@ export function Sidebar({ current, onNav, conflictCount, quarantineCount }: Prop
         {overviewItems.map(n => item(n))}
 
         <div className="nav-sep">Manage</div>
-        {item(manageItems[0], conflictCount)}
-        {item(manageItems[1], quarantineCount)}
-        {item(manageItems[2])}
-        {item(manageItems[3])}
+        {item(manageItems[0]!, conflictCount)}
+        {item(manageItems[1]!, quarantineCount)}
+        {item(manageItems[2]!)}
+        {item(manageItems[3]!)}
 
         <div className="nav-sep">System</div>
         {systemItems.map(n => item(n))}

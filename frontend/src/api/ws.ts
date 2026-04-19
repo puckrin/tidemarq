@@ -34,7 +34,7 @@ class WsClient {
 
       this.ws.onmessage = (e) => {
         try {
-          const event: WsEvent = JSON.parse(e.data)
+          const event = JSON.parse(e.data as string) as WsEvent
           this.listeners.forEach(fn => fn(event))
         } catch { /* ignore malformed messages */ }
       }

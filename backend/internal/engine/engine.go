@@ -726,7 +726,7 @@ func (e *Engine) transferFile(ctx context.Context, cfg Config, srcAbsPath, dstAb
 			return 0, fmt.Errorf("copying file: %w", copyErr)
 		}
 		if paused {
-			os.Remove(dstAbsPath) //nolint:errcheck
+			_ = os.Remove(dstAbsPath)
 			return 0, errMidFilePause
 		}
 	}
@@ -982,42 +982,6 @@ func (e *Engine) transferFileFSStreaming(ctx context.Context, cfg Config, srcFS,
 // or SFTP servers that truncate sub-second components).
 func mtimeMatch(a, b time.Time) bool {
 	return a.Unix() == b.Unix()
-}
-
-// syncFile is the one-way-backup path: decides whether to copy fi and does so.
-// Returns (filesCopied, filesSkipped, bytesWritten, error).
-// Kept for the local-only two-way engine path.
-func (e *Engine) syncFile(ctx context.Context, cfg Config, fi FileInfo, srcBase, destBase string, snapshot bool) (int, int, int64, error) {
-	algo := effectiveAlgo(cfg)
-	srcHash, err := hasher.HashFile(algo, fi.AbsPath)
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("hashing source: %w", err)
-	}
-
-	entry, err := e.manifest.Get(ctx, cfg.JobID, fi.RelPath)
-	if err != nil && !errors.Is(err, manifest.ErrNotFound) {
-		return 0, 0, 0, fmt.Errorf("reading manifest: %w", err)
-	}
-
-	destPath := filepath.Join(destBase, filepath.FromSlash(fi.RelPath))
-
-	if entry != nil && entry.ContentHash == srcHash {
-		if _, err := os.Stat(destPath); err == nil {
-			return 0, 1, 0, nil
-		}
-	}
-
-	if snapshot && cfg.VersionsSvc != nil {
-		if _, statErr := os.Stat(destPath); statErr == nil {
-			_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, fi.RelPath, destPath, algo)
-		}
-	}
-
-	written, err := e.transferFile(ctx, cfg, fi.AbsPath, destPath, fi, srcHash)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	return 1, 0, written, nil
 }
 
 // -------------------------------------------------------------------------

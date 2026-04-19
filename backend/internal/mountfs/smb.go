@@ -57,7 +57,7 @@ func NewSMB(cfg SMBConfig) (*SMBFS, error) {
 
 	share, err := sess.Mount(cfg.Share)
 	if err != nil {
-		sess.Logoff()
+		_ = sess.Logoff()
 		conn.Close()
 		return nil, fmt.Errorf("SMB mount share %q: %w", cfg.Share, err)
 	}
@@ -208,7 +208,7 @@ func (s *SMBFS) Rename(oldPath, newPath string) error {
 }
 
 func (s *SMBFS) Close() error {
-	s.share.Umount()
-	s.sess.Logoff()
+	_ = s.share.Umount()
+	_ = s.sess.Logoff()
 	return s.conn.Close()
 }

@@ -264,6 +264,22 @@ func (s *Service) ClearRemovedQuarantine(ctx context.Context, jobID int64) error
 	return s.db.ClearRemovedQuarantineEntries(ctx, jobID)
 }
 
+// ExpireQuarantine removes all active quarantine entries whose retention period
+// has elapsed, deleting both the database records and the files on disk.
+// File removals are best-effort: a missing quarantine file is not an error.
+// Call this on a schedule (e.g. once per day or at job start) to enforce the
+// configured quarantine retention policy.
+func (s *Service) ExpireQuarantine(ctx context.Context) error {
+	paths, err := s.db.DeleteExpiredQuarantineEntries(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range paths {
+		_ = os.Remove(p) // best-effort: file may already be gone
+	}
+	return nil
+}
+
 // pruneEmptyDirs removes dir and each empty ancestor up to (but not including)
 // root, walking bottom-up. It stops as soon as a non-empty directory is found
 // or the root boundary is reached. Errors (permissions, non-empty dirs) are
