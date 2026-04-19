@@ -57,8 +57,8 @@ func NewSMB(cfg SMBConfig) (*SMBFS, error) {
 
 	share, err := sess.Mount(cfg.Share)
 	if err != nil {
+		// Logoff closes the underlying conn; no separate conn.Close() needed.
 		_ = sess.Logoff()
-		conn.Close()
 		return nil, fmt.Errorf("SMB mount share %q: %w", cfg.Share, err)
 	}
 
@@ -209,6 +209,8 @@ func (s *SMBFS) Rename(oldPath, newPath string) error {
 
 func (s *SMBFS) Close() error {
 	_ = s.share.Umount()
-	_ = s.sess.Logoff()
-	return s.conn.Close()
+	// Logoff sends the SMB2 LOGOFF request and closes the underlying TCP
+	// connection. Calling conn.Close() afterwards would always return "use of
+	// closed network connection" because the socket is already gone.
+	return s.sess.Logoff()
 }
