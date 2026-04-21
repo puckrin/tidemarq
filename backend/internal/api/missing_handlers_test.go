@@ -123,6 +123,7 @@ func TestSettings_Update(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"versions_to_keep":          5,
 		"quarantine_retention_days": 14,
+		"audit_log_retention_days":  60,
 	})
 	resp := doRequest(t, ts, http.MethodPut, "/api/v1/settings", &token, bytes.NewReader(body))
 	defer resp.Body.Close()

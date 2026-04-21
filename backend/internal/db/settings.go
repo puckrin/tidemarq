@@ -9,6 +9,7 @@ import (
 type AppSettings struct {
 	VersionsToKeep          int       `json:"versions_to_keep"`
 	QuarantineRetentionDays int       `json:"quarantine_retention_days"`
+	AuditLogRetentionDays   int       `json:"audit_log_retention_days"`
 	UpdatedAt               time.Time `json:"updated_at"`
 }
 
@@ -16,28 +17,41 @@ type AppSettings struct {
 // Returns safe defaults if the row is missing for any reason.
 func (db *DB) GetSettings(ctx context.Context) (*AppSettings, error) {
 	row := db.DB.QueryRowContext(ctx,
-		`SELECT versions_to_keep, quarantine_retention_days, updated_at FROM settings WHERE id = 1`)
+		`SELECT versions_to_keep, quarantine_retention_days, audit_log_retention_days, updated_at FROM settings WHERE id = 1`)
 	var s AppSettings
-	if err := row.Scan(&s.VersionsToKeep, &s.QuarantineRetentionDays, &s.UpdatedAt); err != nil {
-		return &AppSettings{VersionsToKeep: 10, QuarantineRetentionDays: 30, UpdatedAt: time.Now()}, nil
+	if err := row.Scan(&s.VersionsToKeep, &s.QuarantineRetentionDays, &s.AuditLogRetentionDays, &s.UpdatedAt); err != nil {
+		return &AppSettings{VersionsToKeep: 10, QuarantineRetentionDays: 30, AuditLogRetentionDays: 90, UpdatedAt: time.Now()}, nil
 	}
 	return &s, nil
 }
 
 // UpdateSettings persists new values and returns the saved settings.
-func (db *DB) UpdateSettings(ctx context.Context, versionsToKeep, quarantineRetentionDays int) (*AppSettings, error) {
+func (db *DB) UpdateSettings(ctx context.Context, versionsToKeep, quarantineRetentionDays, auditLogRetentionDays int) (*AppSettings, error) {
 	now := time.Now().UTC()
 	_, err := db.DB.ExecContext(ctx,
-		`UPDATE settings SET versions_to_keep = ?, quarantine_retention_days = ?, updated_at = ? WHERE id = 1`,
-		versionsToKeep, quarantineRetentionDays, now)
+		`UPDATE settings SET versions_to_keep = ?, quarantine_retention_days = ?, audit_log_retention_days = ?, updated_at = ? WHERE id = 1`,
+		versionsToKeep, quarantineRetentionDays, auditLogRetentionDays, now)
 	if err != nil {
 		return nil, err
 	}
 	return &AppSettings{
 		VersionsToKeep:          versionsToKeep,
 		QuarantineRetentionDays: quarantineRetentionDays,
+		AuditLogRetentionDays:   auditLogRetentionDays,
 		UpdatedAt:               now,
 	}, nil
+}
+
+// DeleteExpiredAuditEntries removes audit log rows older than retentionDays.
+// Returns the number of rows deleted.
+func (db *DB) DeleteExpiredAuditEntries(ctx context.Context, retentionDays int) (int64, error) {
+	res, err := db.DB.ExecContext(ctx,
+		`DELETE FROM audit_log WHERE created_at < datetime('now', ? || ' days')`,
+		-retentionDays)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // PruneFileVersions deletes versions beyond the newest keepCount for a given

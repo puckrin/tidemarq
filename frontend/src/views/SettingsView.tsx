@@ -74,15 +74,17 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
   const { data: health }      = useQuery({ queryKey: ['health'], queryFn: getHealth })
   const { data: appSettings } = useQuery({ queryKey: ['settings'], queryFn: getSettings })
 
-  const [syncDefaults, setSyncDefaults] = useState<Pick<AppSettings, 'versions_to_keep' | 'quarantine_retention_days'>>({
+  const [syncDefaults, setSyncDefaults] = useState<Pick<AppSettings, 'versions_to_keep' | 'quarantine_retention_days' | 'audit_log_retention_days'>>({
     versions_to_keep: 10,
     quarantine_retention_days: 30,
+    audit_log_retention_days: 90,
   })
   // Populate form from API once loaded
   useEffect(() => {
     if (appSettings) setSyncDefaults({
       versions_to_keep: appSettings.versions_to_keep,
       quarantine_retention_days: appSettings.quarantine_retention_days,
+      audit_log_retention_days: appSettings.audit_log_retention_days,
     })
   }, [appSettings])
 
@@ -188,6 +190,17 @@ export function SettingsView({ theme, onToggleTheme }: Props) {
                 className="fi" style={{ maxWidth: 100 }} type="number" min={1}
                 value={syncDefaults.quarantine_retention_days}
                 onChange={e => setSyncDefaults(s => ({ ...s, quarantine_retention_days: Number(e.target.value) }))}
+              />
+            </div>
+            <div className="srow">
+              <div>
+                <div className="srow-name">Audit log retention</div>
+                <div className="srow-desc">Days before audit log entries are permanently removed</div>
+              </div>
+              <input
+                className="fi" style={{ maxWidth: 100 }} type="number" min={1}
+                value={syncDefaults.audit_log_retention_days}
+                onChange={e => setSyncDefaults(s => ({ ...s, audit_log_retention_days: Number(e.target.value) }))}
               />
             </div>
           </div>

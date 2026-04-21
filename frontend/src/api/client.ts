@@ -113,7 +113,7 @@ export const testMount = (id: number) =>
 // Settings
 export const getSettings = () =>
   request<AppSettings>(`${BASE}/settings`)
-export const updateSettings = (data: Pick<AppSettings, 'versions_to_keep' | 'quarantine_retention_days'>) =>
+export const updateSettings = (data: Pick<AppSettings, 'versions_to_keep' | 'quarantine_retention_days' | 'audit_log_retention_days'>) =>
   request<AppSettings>(`${BASE}/settings`, { method: 'PUT', body: JSON.stringify(data) })
 
 // Fetches a URL with auth headers and returns the raw Response.

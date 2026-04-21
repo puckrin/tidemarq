@@ -129,6 +129,28 @@ func (s *Service) Start(ctx context.Context) error {
 			_ = s.db.UpdateJobStatus(ctx, j.ID, "idle", nil, false)
 		}
 	}
+
+	// Daily maintenance sweep: expire quarantine files and prune the audit log.
+	// Runs at midnight; also fires immediately on startup so a freshly-started
+	// instance enforces retention without waiting up to 24 hours.
+	sweep := func() {
+		bg := context.Background()
+		if s.versionsSvc != nil {
+			if err := s.versionsSvc.ExpireQuarantine(bg); err != nil {
+				log.Printf("maintenance: expire quarantine: %v", err)
+			}
+		}
+		if s.auditSvc != nil {
+			if err := s.auditSvc.PruneAuditLog(bg); err != nil {
+				log.Printf("maintenance: prune audit log: %v", err)
+			}
+		}
+	}
+	if _, err := s.scheduler.AddFunc("@midnight", sweep); err != nil {
+		return fmt.Errorf("registering maintenance sweep: %w", err)
+	}
+	go sweep() // run once at startup
+
 	s.scheduler.Start()
 	return nil
 }
