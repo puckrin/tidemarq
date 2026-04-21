@@ -95,5 +95,5 @@ func (s *Service) ExportJSON(ctx context.Context, f db.AuditFilter) ([]byte, err
 		return nil, err
 	}
 
-	return json.Marshal(entries)
+	return json.MarshalIndent(entries, "", "  ")
 }
