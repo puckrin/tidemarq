@@ -45,6 +45,18 @@ func (s *Service) Query(ctx context.Context, f db.AuditFilter) ([]*db.AuditEntry
 	return s.db.ListAuditEntries(ctx, f)
 }
 
+// PruneAuditLog deletes audit log entries older than the configured retention
+// period. It reads the current setting from the database on each call so that
+// changes take effect at the next scheduled sweep without a restart.
+func (s *Service) PruneAuditLog(ctx context.Context) error {
+	settings, err := s.db.GetSettings(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.DeleteExpiredAuditEntries(ctx, settings.AuditLogRetentionDays)
+	return err
+}
+
 // ExportCSV writes entries matching the filter as RFC 4180 CSV to a new buffer
 // and returns it. Header row: id, job_id, job_name, actor, event, message, detail, created_at.
 func (s *Service) ExportCSV(ctx context.Context, f db.AuditFilter) ([]byte, error) {
@@ -95,5 +107,5 @@ func (s *Service) ExportJSON(ctx context.Context, f db.AuditFilter) ([]byte, err
 		return nil, err
 	}
 
-	return json.Marshal(entries)
+	return json.MarshalIndent(entries, "", "  ")
 }

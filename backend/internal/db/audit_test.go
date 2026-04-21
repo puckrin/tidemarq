@@ -232,3 +232,50 @@ func TestListAuditEntries_JobIDAndEvent(t *testing.T) {
 		t.Errorf("expected 'a-fail', got %q", entries[0].Message)
 	}
 }
+
+// TestDeleteExpiredAuditEntries verifies that only entries older than the
+// retention window are removed and that newer entries survive.
+func TestDeleteExpiredAuditEntries(t *testing.T) {
+	d := newAuditTestDB(t)
+	ctx := context.Background()
+
+	jobID := seedAuditJob(t, d, "job-a")
+
+	// Insert three entries directly so we can backdate two of them.
+	jid := jobID
+	_, err := d.CreateAuditEntry(ctx, db.CreateAuditEntryParams{JobID: &jid, JobName: "job-a", Event: "job_started", Message: "recent"})
+	if err != nil {
+		t.Fatalf("CreateAuditEntry: %v", err)
+	}
+
+	// Backdated entries (91 days old) — should be deleted.
+	old := time.Now().UTC().Add(-91 * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	for _, msg := range []string{"old-1", "old-2"} {
+		if _, err := d.DB.ExecContext(ctx,
+			`INSERT INTO audit_log (job_id, job_name, actor, event, message, detail, created_at) VALUES (?, ?, '', 'job_started', ?, '', ?)`,
+			jobID, "job-a", msg, old,
+		); err != nil {
+			t.Fatalf("insert old entry: %v", err)
+		}
+	}
+
+	n, err := d.DeleteExpiredAuditEntries(ctx, 90)
+	if err != nil {
+		t.Fatalf("DeleteExpiredAuditEntries: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("deleted %d rows, want 2", n)
+	}
+
+	// The recent entry must still be present.
+	entries, err := d.ListAuditEntries(ctx, db.AuditFilter{})
+	if err != nil {
+		t.Fatalf("ListAuditEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("remaining entries = %d, want 1", len(entries))
+	}
+	if entries[0].Message != "recent" {
+		t.Errorf("wrong entry survived: %q", entries[0].Message)
+	}
+}

@@ -1,6 +1,7 @@
 export interface AppSettings {
   versions_to_keep: number
   quarantine_retention_days: number
+  audit_log_retention_days: number
   updated_at: string
 }
 

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ScrollText, Download } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { listJobs, listAuditLog } from '../api/client'
+import { listJobs, listAuditLog, exportAuditLog } from '../api/client'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import type { View } from '../components/Sidebar'
@@ -76,8 +76,7 @@ export function AuditView({ onNav }: Props) {
     .slice(0, 500)
 
   const handleExport = (fmt: 'csv' | 'json') => {
-    const qs = filterJobId ? `?job_id=${filterJobId}&format=${fmt}` : `?format=${fmt}`
-    window.open(`/api/v1/audit/export${qs}`, '_blank')
+    exportAuditLog(fmt, filterJobId).catch(() => { /* error surfaced by auth:expired event if 401 */ })
   }
 
   return (

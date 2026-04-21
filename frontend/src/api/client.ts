@@ -113,8 +113,28 @@ export const testMount = (id: number) =>
 // Settings
 export const getSettings = () =>
   request<AppSettings>(`${BASE}/settings`)
-export const updateSettings = (data: Pick<AppSettings, 'versions_to_keep' | 'quarantine_retention_days'>) =>
+export const updateSettings = (data: Pick<AppSettings, 'versions_to_keep' | 'quarantine_retention_days' | 'audit_log_retention_days'>) =>
   request<AppSettings>(`${BASE}/settings`, { method: 'PUT', body: JSON.stringify(data) })
+
+// Fetches a URL with auth headers and returns the raw Response.
+// Used for file downloads where the caller needs the Blob rather than JSON.
+async function requestRaw(path: string): Promise<Response> {
+  const token = localStorage.getItem('token')
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(path, { headers })
+  if (res.status === 401) {
+    localStorage.removeItem('token')
+    window.dispatchEvent(new Event('auth:expired'))
+    throw new ApiError('unauthorized', 'Session expired')
+  }
+  if (!res.ok) {
+    let code = 'unknown'; let message = res.statusText
+    try { const b = await res.json() as { code?: string; error?: string }; code = b.code ?? code; message = b.error ?? message } catch { /* ignore */ }
+    throw new ApiError(code, message)
+  }
+  return res
+}
 
 // Audit log
 export const listAuditLog = (params?: { job_id?: number; event?: string; limit?: number; offset?: number }) => {
@@ -125,6 +145,21 @@ export const listAuditLog = (params?: { job_id?: number; event?: string; limit?:
   if (params?.offset) q.set('offset', String(params.offset))
   const qs = q.toString()
   return request<AuditEntry[]>(`${BASE}/audit${qs ? `?${qs}` : ''}`)
+}
+
+export const exportAuditLog = async (format: 'csv' | 'json', jobId?: number): Promise<void> => {
+  const q = new URLSearchParams({ format })
+  if (jobId != null) q.set('job_id', String(jobId))
+  const res = await requestRaw(`${BASE}/audit/export?${q.toString()}`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `audit_log.${format}`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 // Browse (directory listing)

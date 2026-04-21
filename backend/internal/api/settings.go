@@ -18,6 +18,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		VersionsToKeep          int `json:"versions_to_keep"`
 		QuarantineRetentionDays int `json:"quarantine_retention_days"`
+		AuditLogRetentionDays   int `json:"audit_log_retention_days"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body", "bad_request")
@@ -31,7 +32,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "quarantine_retention_days must be at least 1", "bad_request")
 		return
 	}
-	settings, err := s.db.UpdateSettings(r.Context(), in.VersionsToKeep, in.QuarantineRetentionDays)
+	if in.AuditLogRetentionDays < 1 {
+		writeError(w, http.StatusBadRequest, "audit_log_retention_days must be at least 1", "bad_request")
+		return
+	}
+	settings, err := s.db.UpdateSettings(r.Context(), in.VersionsToKeep, in.QuarantineRetentionDays, in.AuditLogRetentionDays)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update settings", "internal_error")
 		return
