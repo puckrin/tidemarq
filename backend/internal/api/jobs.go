@@ -66,6 +66,10 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		DeltaMinBytes:  req.DeltaMinBytes,
 	})
 	if err != nil {
+		if errors.Is(err, jobs.ErrNameConflict) {
+			writeError(w, http.StatusConflict, err.Error(), "conflict")
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error(), "bad_request")
 		return
 	}
@@ -126,6 +130,10 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, jobs.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "job not found", "not_found")
+			return
+		}
+		if errors.Is(err, jobs.ErrNameConflict) {
+			writeError(w, http.StatusConflict, err.Error(), "conflict")
 			return
 		}
 		writeError(w, http.StatusBadRequest, err.Error(), "bad_request")

@@ -158,6 +158,13 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Prevent an admin from deleting their own account — doing so could lock
+	// everyone out if they are the last admin.
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil && claims.UserID == id {
+		writeError(w, http.StatusBadRequest, "cannot delete your own account", "bad_request")
+		return
+	}
+
 	if err := s.db.DeleteUser(r.Context(), id); err != nil {
 		if err == db.ErrNotFound {
 			writeError(w, http.StatusNotFound, "user not found", "not_found")

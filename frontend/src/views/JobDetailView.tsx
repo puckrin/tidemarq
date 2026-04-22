@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Square, Play, Trash2, Pencil, FileCheck, FileCog, FileX } from 'lucide-react'
+import { Square, Play, Trash2, Pencil, FileCheck, FileCog, FileX, History } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getJob, runJob, pauseJob, resumeJob, deleteJob, listQuarantine, listConflicts } from '../api/client'
+import { getJob, runJob, pauseJob, resumeJob, deleteJob, listQuarantine, listConflicts, listVersionsByJob, restoreVersion } from '../api/client'
 import { QuarantineCard } from '../components/QuarantineCard'
 import { ConflictCard } from '../components/ConflictCard'
 import { Badge } from '../components/Badge'
@@ -64,6 +64,22 @@ export function JobDetailView({ jobId, onNav }: Props) {
     enabled: job?.mode === 'two-way',
   })
   const pendingConflicts = allConflicts.filter(c => c.status === 'pending')
+
+  const { data: versions = [] } = useQuery({
+    queryKey: ['versions', jobId],
+    queryFn: () => listVersionsByJob(jobId),
+    refetchInterval: 30000,
+    staleTime: 10000,
+  })
+
+  const restoreVer = useMutation({
+    mutationFn: (id: number) => restoreVersion(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['versions', jobId] })
+      toast('Version restored.', 'ok')
+    },
+    onError: (e: Error) => toast(e.message, 'err'),
+  })
 
 
   // Global progress store — survives navigation
@@ -305,6 +321,49 @@ export function JobDetailView({ jobId, onNav }: Props) {
             entries={quarantine}
             onChanged={() => qc.invalidateQueries({ queryKey: ['quarantine', jobId] })}
           />
+        </Card>
+      )}
+
+      {/* Version history — shown when any snapshots exist for this job */}
+      {versions.length > 0 && (
+        <Card style={{ marginTop: 16 }}>
+          <CardHeader title={`Version History (${versions.length})`} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+            {versions.map((v, i) => (
+              <div
+                key={v.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '8px 0',
+                  borderBottom: i < versions.length - 1 ? '1px solid var(--border)' : undefined,
+                  fontSize: 13,
+                }}
+              >
+                <History size={13} style={{ color: 'var(--text3)', flexShrink: 0 }} />
+                <span className="mono fs12" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text2)' }}>
+                  {v.rel_path}
+                </span>
+                <span style={{ color: 'var(--text3)', flexShrink: 0, fontSize: 11 }}>
+                  v{v.version_num}
+                </span>
+                <span style={{ color: 'var(--text3)', flexShrink: 0, fontSize: 11, minWidth: 52, textAlign: 'right' }}>
+                  {fmtBytes(v.size_bytes)}
+                </span>
+                <span style={{ color: 'var(--text3)', flexShrink: 0, fontSize: 11, minWidth: 130 }}>
+                  {new Date(v.created_at).toLocaleString()}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => restoreVer.mutate(v.id)}
+                >
+                  Restore
+                </Button>
+              </div>
+            ))}
+          </div>
         </Card>
       )}
 

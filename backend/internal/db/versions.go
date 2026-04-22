@@ -64,6 +64,35 @@ func (db *DB) GetFileVersion(ctx context.Context, id int64) (*FileVersion, error
 	return v, err
 }
 
+// ListRecentVersionsByJob returns the most recent version snapshots across all
+// files for a given job, ordered by creation time descending.
+// limit <= 0 defaults to 50.
+func (db *DB) ListRecentVersionsByJob(ctx context.Context, jobID int64, limit int) ([]*FileVersion, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, job_id, rel_path, version_num, stored_path, sha256, hash_algo, size_bytes, mod_time, created_at
+		 FROM file_versions WHERE job_id = ? ORDER BY created_at DESC LIMIT ?`,
+		jobID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*FileVersion
+	for rows.Next() {
+		v := &FileVersion{}
+		if err := rows.Scan(&v.ID, &v.JobID, &v.RelPath, &v.VersionNum, &v.StoredPath,
+			&v.ContentHash, &v.HashAlgo, &v.SizeBytes, &v.ModTime, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // ListFileVersions returns all versions for a given job and path, newest first.
 func (db *DB) ListFileVersions(ctx context.Context, jobID int64, relPath string) ([]*FileVersion, error) {
 	rows, err := db.QueryContext(ctx,

@@ -597,41 +597,59 @@ func (e *Engine) handleTwoWayConflict(
 
 	algo := effectiveAlgo(cfg)
 
-	// Snapshot before auto-resolve overwrites anything.
+	// Snapshot the destination before any resolution may overwrite it.
 	if cfg.VersionsSvc != nil && destState.Exists {
 		_, _ = cfg.VersionsSvc.Snapshot(ctx, cfg.JobID, relPath, destPath, algo)
 	}
 
-	// For ask-user: AutoResolve renames dest with .conflict suffix and returns both
-	// the winning path and the path of the renamed file so it can be stored and cleaned
-	// up when the user resolves the conflict.  For auto strategies conflictPath is empty.
+	// AutoResolve picks the winner path. For ask-user it also renames the dest
+	// copy to a .conflict.<ts> file (conflictPath) so both versions survive until
+	// the user decides. For all other strategies conflictPath is empty.
 	winnerPath, conflictPath, err := conflicts.AutoResolve(strategy, srcPath, destPath, srcState, destState)
 	if err != nil {
 		return 0, err
 	}
 
-	// Record the conflict in the DB after AutoResolve so conflict_path is known.
+	// Record the conflict in the DB (idempotent — returns the existing pending
+	// record if one already exists for the same job+path).
+	var conflictID int64
 	if cfg.ConflictsSvc != nil {
-		_, _ = cfg.ConflictsSvc.Record(ctx, cfg.JobID, relPath, strategy, conflictPath, srcState, destState)
+		c, _ := cfg.ConflictsSvc.Record(ctx, cfg.JobID, relPath, strategy, conflictPath, srcState, destState)
+		if c != nil {
+			conflictID = c.ID
+		}
 	}
 
-	// If winner is the destination, no copy needed.
-	if winnerPath == destPath {
+	// For ask-user: leave the filesystem untouched and keep the conflict pending
+	// in the DB until the user resolves it via the API.
+	if strategy == "ask-user" {
 		return 0, nil
 	}
 
-	// Determine source FileInfo for metadata preservation.
-	fi := FileInfo{RelPath: relPath, ModTime: srcState.ModTime}
-	srcHash := srcState.ContentHash
-	if winnerPath == destPath {
-		fi.ModTime = destState.ModTime
-		srcHash = destState.ContentHash
-	}
-	if info, err := os.Stat(winnerPath); err == nil {
-		fi.Permissions = info.Mode().Perm()
+	// For auto-resolution strategies: apply the winner to both sides so they converge.
+	var written int64
+	if winnerPath == srcPath {
+		// Source wins: copy src → dest.
+		fi := FileInfo{RelPath: relPath, ModTime: srcState.ModTime}
+		if info, statErr := os.Stat(winnerPath); statErr == nil {
+			fi.Permissions = info.Mode().Perm()
+		}
+		written, err = e.transferFile(ctx, cfg, srcPath, destPath, fi, srcState.ContentHash)
+	} else {
+		// Destination wins: copy dest → src so both sides converge on the winner.
+		fi := FileInfo{RelPath: relPath, ModTime: destState.ModTime}
+		if info, statErr := os.Stat(winnerPath); statErr == nil {
+			fi.Permissions = info.Mode().Perm()
+		}
+		written, err = e.transferFile(ctx, cfg, destPath, srcPath, fi, destState.ContentHash)
 	}
 
-	return e.transferFile(ctx, cfg, winnerPath, destPath, fi, srcHash)
+	// Mark the conflict as auto-resolved in the DB regardless of copy outcome.
+	if cfg.ConflictsSvc != nil && conflictID != 0 {
+		_ = cfg.ConflictsSvc.MarkAutoResolved(ctx, conflictID, strategy)
+	}
+
+	return written, err
 }
 
 // resolveFS returns the source and destination MountFS for a Config.
