@@ -70,6 +70,23 @@ type UpdateJobParams struct {
 	DeltaMinBytes    int64
 }
 
+// JobNameExists reports whether a job with name already exists. Pass excludeID > 0
+// to exclude a specific job (used by Update to allow keeping the same name).
+func (db *DB) JobNameExists(ctx context.Context, name string, excludeID int64) (bool, error) {
+	var count int
+	var err error
+	if excludeID > 0 {
+		err = db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM jobs WHERE name = ? AND id != ?`, name, excludeID,
+		).Scan(&count)
+	} else {
+		err = db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM jobs WHERE name = ?`, name,
+		).Scan(&count)
+	}
+	return count > 0, err
+}
+
 // CreateJob inserts a new job and returns the created record.
 func (db *DB) CreateJob(ctx context.Context, p CreateJobParams) (*Job, error) {
 	if p.ConflictStrategy == "" {

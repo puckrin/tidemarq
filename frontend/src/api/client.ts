@@ -83,6 +83,8 @@ export const clearResolvedConflicts = (jobId?: number) =>
 // Versions
 export const listVersions = (jobId: number, path: string) =>
   request<FileVersion[]>(`${BASE}/versions?job_id=${jobId}&path=${encodeURIComponent(path)}`)
+export const listVersionsByJob = (jobId: number) =>
+  request<FileVersion[]>(`${BASE}/versions?job_id=${jobId}`)
 export const restoreVersion = (id: number) =>
   request<void>(`${BASE}/versions/${id}/restore`, { method: 'POST' })
 

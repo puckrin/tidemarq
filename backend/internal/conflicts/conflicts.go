@@ -193,6 +193,13 @@ func (s *Service) Resolve(ctx context.Context, id int64, action, srcPath, destPa
 	return s.db.ResolveConflict(ctx, id, action, "resolved")
 }
 
+// MarkAutoResolved records that an auto-resolution strategy was applied during a
+// sync run, transitioning the conflict to "auto-resolved" without performing any
+// additional filesystem operations (the engine has already applied them).
+func (s *Service) MarkAutoResolved(ctx context.Context, id int64, strategy string) error {
+	return s.db.ResolveConflict(ctx, id, strategy, "auto-resolved")
+}
+
 // AutoResolve applies the job's configured strategy automatically during a sync run.
 // Returns the path that should be used as the source of truth after resolution.
 // For ask-user, it also renames the dest copy to a .conflict.<ts> file and returns

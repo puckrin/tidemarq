@@ -17,13 +17,17 @@ func (s *Server) handleListVersions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "job_id is required", "bad_request")
 		return
 	}
-	relPath := r.URL.Query().Get("path")
-	if relPath == "" {
-		writeError(w, http.StatusBadRequest, "path is required", "bad_request")
-		return
-	}
 
-	list, err := s.versionsSvc.ListVersions(r.Context(), jobID, relPath)
+	relPath := r.URL.Query().Get("path")
+
+	var list []*db.FileVersion
+	if relPath == "" {
+		// No path supplied — return the most recent snapshots across all files for
+		// this job. Used by the Job Detail page to show version history at a glance.
+		list, err = s.versionsSvc.ListRecentVersionsByJob(r.Context(), jobID)
+	} else {
+		list, err = s.versionsSvc.ListVersions(r.Context(), jobID, relPath)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list versions", "internal_error")
 		return

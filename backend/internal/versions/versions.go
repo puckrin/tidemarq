@@ -100,6 +100,12 @@ func (s *Service) ListVersions(ctx context.Context, jobID int64, relPath string)
 	return s.db.ListFileVersions(ctx, jobID, relPath)
 }
 
+// ListRecentVersionsByJob returns the most recent version snapshots across all
+// files for a job (up to 50), newest first. Used by the Job Detail UI.
+func (s *Service) ListRecentVersionsByJob(ctx context.Context, jobID int64) ([]*db.FileVersion, error) {
+	return s.db.ListRecentVersionsByJob(ctx, jobID, 50)
+}
+
 // GetVersion retrieves a single version by ID.
 func (s *Service) GetVersion(ctx context.Context, id int64) (*db.FileVersion, error) {
 	v, err := s.db.GetFileVersion(ctx, id)

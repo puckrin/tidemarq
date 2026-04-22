@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -29,6 +30,7 @@ var (
 	ErrAlreadyRunning = errors.New("job is already running")
 	ErrNotRunning     = errors.New("job is not running")
 	ErrNotFound       = errors.New("job not found")
+	ErrNameConflict   = errors.New("a job with this name already exists")
 )
 
 // CreateParams holds the fields required to create a new job.
@@ -176,6 +178,18 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*db.Job, error) {
 	if p.DestMountID == nil && p.DestinationPath == "" {
 		return nil, errors.New("destination_path is required for local filesystem jobs")
 	}
+	// For local-to-local jobs, source and destination must be different paths.
+	if p.SourceMountID == nil && p.DestMountID == nil &&
+		p.SourcePath != "" && p.DestinationPath != "" &&
+		filepath.Clean(p.SourcePath) == filepath.Clean(p.DestinationPath) {
+		return nil, errors.New("source_path and destination_path must be different")
+	}
+	// Job names must be unique.
+	if exists, err := s.db.JobNameExists(ctx, p.Name, 0); err != nil {
+		return nil, fmt.Errorf("checking name uniqueness: %w", err)
+	} else if exists {
+		return nil, ErrNameConflict
+	}
 	if !validMode(p.Mode) {
 		return nil, fmt.Errorf("invalid mode %q: must be one-way-backup, one-way-mirror, or two-way", p.Mode)
 	}
@@ -243,6 +257,18 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (*db.Job
 	}
 	if p.DestMountID == nil && p.DestinationPath == "" {
 		return nil, errors.New("destination_path is required for local filesystem jobs")
+	}
+	// For local-to-local jobs, source and destination must be different paths.
+	if p.SourceMountID == nil && p.DestMountID == nil &&
+		p.SourcePath != "" && p.DestinationPath != "" &&
+		filepath.Clean(p.SourcePath) == filepath.Clean(p.DestinationPath) {
+		return nil, errors.New("source_path and destination_path must be different")
+	}
+	// Job names must be unique (excluding this job itself).
+	if exists, err := s.db.JobNameExists(ctx, p.Name, id); err != nil {
+		return nil, fmt.Errorf("checking name uniqueness: %w", err)
+	} else if exists {
+		return nil, ErrNameConflict
 	}
 	if !validMode(p.Mode) {
 		return nil, fmt.Errorf("invalid mode %q", p.Mode)
