@@ -1,0 +1,13 @@
+# ============================================================
+# tidemarq Test Override — Mounts test filesystem into container
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml up --build
+#
+# This exposes C:\tidemarq-test on the host as /test-data inside
+# the container so all test directories are browsable via the UI.
+# ============================================================
+services:
+  tidemarq:
+    volumes:
+      - C:\tidemarq-test:/test-data
