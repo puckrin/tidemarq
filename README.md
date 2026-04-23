@@ -8,6 +8,8 @@ A self-hosted directory synchronisation tool with a browser-based UI. Runs as a 
 
 tidemarq lets you define sync jobs between directories — local folders, network shares (SMB/CIFS), or SFTP servers — and manage them from a browser.
 
+![tidemarq dashboard](docs/screenshots/dashboard.png)
+
 **Sync jobs** are the core concept. Each job has a source, a destination, a mode, and a schedule:
 
 - **One-way backup** — copies new and changed files from source to destination. Files deleted from the source are left in place at the destination.
