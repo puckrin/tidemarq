@@ -83,7 +83,7 @@ tidemarq/
 # Backend (from backend/)
 go run ./cmd/tidemarq
 
-# Frontend dev server (from frontend/) — proxies API to https://localhost:8717
+# Frontend dev server (from frontend/) — proxies API to https://localhost:8443
 npm install
 npm run dev
 
@@ -235,6 +235,7 @@ The following describes the current implemented state of the application. Use th
 - Mount credentials encrypted at rest with AES-256-GCM (`internal/crypt`)
 - Audit log searchable and filterable by job, event type, and date range via `/api/v1/audit`
 - Audit log export as CSV and JSON
+- Audit log retention: configurable via `retention.audit_log_retention_days` (default 90 days); a daily sweep at midnight prunes expired entries
 
 ---
 
@@ -243,6 +244,9 @@ The following describes the current implemented state of the application. Use th
 - Pure Go build (`CGO_ENABLED=0`, `modernc/sqlite`): cross-compiles cleanly for `linux/amd64` and `linux/arm64`
 - Final Docker image from `gcr.io/distroless/static-debian12` — minimal attack surface
 - `go test ./...` passes on both architectures
+- Job names must be unique; creating or renaming a job to a name that already exists returns 409
+- Source and destination paths cannot be the same for local filesystem jobs; the API returns 400 if they match
+- Admin cannot delete their own account; `DELETE /api/v1/users/{id}` returns 400 when the requesting user matches the target
 
 ---
 
