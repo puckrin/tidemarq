@@ -48,10 +48,17 @@ Simple to deploy. Nothing to install on the remote. Always correct.
 
 ## Running tidemarq
 
-```bash
-# Full stack — UI available at https://localhost:8717
-docker compose up --build
+No git clone required. Download [`docker-compose.yml`](https://github.com/puckrin/tidemarq/releases/latest/download/docker-compose.yml) and run:
 
+```bash
+docker compose up
+```
+
+The image is pulled automatically from `ghcr.io/puckrin/tidemarq:latest`. The UI is available at `https://localhost:8717`.
+
+### Development
+
+```bash
 # Backend only (from backend/) — uses tidemarq.dev.yaml if present
 go run ./cmd/tidemarq
 
@@ -78,8 +85,9 @@ npm install && npm run dev
 
 ### First start
 
-On first start tidemarq will:
-- Create a default admin account — username `admin`, password `admin123` (or the value of `TIDEMARQ_ADMIN_PASSWORD` if set). **Change this immediately after login via Settings → Users.**
+Set your admin password before starting by uncommenting `TIDEMARQ_ADMIN_PASSWORD` in `docker-compose.yml`. On first start tidemarq will:
+
+- Create a default admin account — username `admin`, password from `TIDEMARQ_ADMIN_PASSWORD` (default `admin123`). **Change this immediately after login via Settings → Users.**
 - Auto-generate a TLS certificate if none is configured
 - Auto-generate a JWT signing secret stored in `<data_dir>/.jwt_secret`
 
@@ -120,12 +128,13 @@ volumes:
 The container paths (right-hand side, e.g. `/mnt/media`) are what you enter as source or destination paths when creating a sync job in the UI. Restart the stack after editing:
 
 ```bash
-docker compose up --build
+docker compose up
 ```
 
 ---
 
 ## Documentation
 
+- `tidemarq.example.yaml` — advanced configuration reference (custom ports, TLS, JWT secret); not needed for a standard install
 - `sync_app_spec.md` — full functional specification
 - `CLAUDE.md` — developer guide and architectural rules

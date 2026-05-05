@@ -88,7 +88,7 @@ npm install
 npm run dev
 
 # Full stack via Docker — UI at https://localhost:8717
-docker compose up --build
+docker compose up
 
 # Backend tests
 go test ./...

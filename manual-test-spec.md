@@ -62,7 +62,7 @@ source-conflict-source  dest-conflict-source
 
 ```powershell
 cd F:\Projects\tidemarq
-docker compose -f docker-compose.yml -f docker-compose.test.yml up --build -d
+docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
 ```
 
 **Expected result:** Container starts. Wait ~10 seconds, then navigate to `https://localhost:8717`. Accept the self-signed certificate warning.

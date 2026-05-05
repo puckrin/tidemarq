@@ -1,6 +1,6 @@
 services:
   tidemarq:
-    build: .
+    image: ghcr.io/puckrin/tidemarq:latest
     ports:
       - "8716:8716"
       - "8717:8717"
@@ -19,5 +19,11 @@ services:
       #   - /srv/backups:/mnt/backups
 
     environment:
-      - TIDEMARQ_CONFIG=/etc/tidemarq/tidemarq.yaml
+      # Set the admin password for the account created on first start.
+      # Must be at least 8 characters. Change immediately after first login.
+      # - TIDEMARQ_ADMIN_PASSWORD=changeme
+
+      # Mount tidemarq.example.yaml as a config file only if you need advanced options
+      # (custom ports, bring-your-own TLS certificate, stable JWT secret).
+      # - TIDEMARQ_CONFIG=/etc/tidemarq/tidemarq.yaml
     restart: unless-stopped

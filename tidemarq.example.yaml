@@ -1,24 +1,26 @@
-# tidemarq example configuration
-# Copy this file to tidemarq.yaml and fill in the required values,
-# or supply them via environment variables (TIDEMARQ_* prefix).
+# tidemarq advanced configuration
 #
-# Required values are marked REQUIRED — the server will refuse to start
-# without them. Everything else has a sensible default.
+# This file is OPTIONAL. Most users do not need it — the defaults work out of
+# the box and the admin password can be set via the TIDEMARQ_ADMIN_PASSWORD
+# environment variable in docker-compose.yml.
+#
+# Use this file only if you need to change ports, supply your own TLS
+# certificate, or pin a stable JWT secret.
+#
+# To use: uncomment and fill in the values you want to override, mount the
+# file into the container, and set TIDEMARQ_CONFIG to its path.
+#
+# Environment variables (TIDEMARQ_* prefix) override any value set here.
 
 server:
-  http_port: 8716      # HTTP (redirects to HTTPS)
-  https_port: 8717     # HTTPS
-  data_dir: /data      # Persistent storage root (mount a volume here)
-  static_dir: /app/frontend/dist
-
-database:
-  path: /data/tidemarq.db
+  # http_port: 8716      # HTTP — redirects to HTTPS
+  # https_port: 8717     # HTTPS
 
 tls:
-  # Leave blank to use the auto-generated self-signed certificate.
+  # Leave blank (the default) to use the auto-generated self-signed certificate.
   # Set both to use your own certificate (e.g. from Let's Encrypt).
-  cert_file: /data/certs/server.crt
-  key_file:  /data/certs/server.key
+  # cert_file: /data/certs/server.crt
+  # key_file:  /data/certs/server.key
 
 auth:
   # Optional. If left empty, a secret is auto-generated on first start and
@@ -26,12 +28,12 @@ auth:
   # Set this explicitly only if you need tokens to remain valid across
   # multiple instances or after wiping the data directory.
   # Environment variable: TIDEMARQ_AUTH_JWT_SECRET
-  jwt_secret: ""
-  jwt_ttl: 24h
+  # jwt_secret: ""
+  # jwt_ttl: 24h
 
 admin:
   # Credentials for the built-in admin account created on first start.
-  # REQUIRED — password must be at least 8 characters and must not be left empty.
-  # Environment variable: TIDEMARQ_ADMIN_PASSWORD
-  username: admin
-  password: ""
+  # Password must be at least 8 characters. Change immediately after first login.
+  # Simpler alternative: set TIDEMARQ_ADMIN_PASSWORD in docker-compose.yml instead.
+  # username: admin
+  # password: ""
