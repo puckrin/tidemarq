@@ -119,13 +119,14 @@ type Progress struct {
 
 // Result summarises the outcome of a sync run.
 type Result struct {
-	FilesCopied  int
-	FilesSkipped int
-	BytesCopied  int64
-	Conflicts    int  // files that had conflicts (auto-resolved or pending)
-	Quarantined  int  // files moved to quarantine
-	Paused       bool // true if the run was halted by a pause signal
-	Errors       []FileError
+	FilesCopied   int
+	FilesSkipped  int
+	BytesReviewed int64 // cumulative size of files the engine evaluated
+	BytesCopied   int64
+	Conflicts     int  // files that had conflicts (auto-resolved or pending)
+	Quarantined   int  // files moved to quarantine
+	Paused        bool // true if the run was halted by a pause signal
+	Errors        []FileError
 }
 
 // FileError records a transfer failure for a specific file.
@@ -178,6 +179,7 @@ func (e *Engine) runBackup(ctx context.Context, cfg Config) (*Result, error) {
 	done := 0
 	var bytesReviewed, bytesCopied int64
 	rt := &rateTracker{start: time.Now()}
+	defer func() { result.BytesReviewed = bytesReviewed }()
 
 	for _, fi := range files {
 		if paused, ctxErr := checkPause(ctx, cfg.PauseCh); paused {
@@ -290,6 +292,7 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 	done := 0
 	var bytesReviewed, bytesCopied int64
 	rt := &rateTracker{start: time.Now()}
+	defer func() { result.BytesReviewed = bytesReviewed }()
 
 	// Copy new/changed source files to destination.
 	for _, fi := range srcFiles {
@@ -453,6 +456,7 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 	done := 0
 	var bytesReviewed int64 // local mirror; bytesCopied lives on result.BytesCopied
 	rt := &rateTracker{start: time.Now()}
+	defer func() { result.BytesReviewed = bytesReviewed }()
 
 	algo := effectiveAlgo(cfg)
 

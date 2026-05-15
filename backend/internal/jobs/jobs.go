@@ -407,6 +407,35 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		s.mu.Unlock()
 	}()
 
+	// Capture the run's outcome for persistence. The terminal branches below set
+	// runOutcome, runErrMsg and runResult before returning; the deferred writer
+	// uses whatever state was last assigned. Default to "error" so an unhandled
+	// early return is recorded rather than silently dropped.
+	startedAt := time.Now()
+	runOutcome := "error"
+	var runErrMsg *string
+	var runResult *engine.Result
+	defer func() {
+		params := db.CreateJobRunParams{
+			JobID:        job.ID,
+			StartedAt:    startedAt,
+			EndedAt:      time.Now(),
+			Outcome:      runOutcome,
+			ErrorMessage: runErrMsg,
+		}
+		if runResult != nil {
+			params.FilesCopied = runResult.FilesCopied
+			params.FilesSkipped = runResult.FilesSkipped
+			params.FilesQuarantined = runResult.Quarantined
+			params.FilesErrored = len(runResult.Errors)
+			params.BytesReviewed = runResult.BytesReviewed
+			params.BytesCopied = runResult.BytesCopied
+		}
+		if _, err := s.db.CreateJobRun(context.Background(), params); err != nil {
+			log.Printf("jobs: persist job_run for job %d: %v", job.ID, err)
+		}
+	}()
+
 	_ = s.db.UpdateJobStatus(ctx, job.ID, "running", nil, false)
 	s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "started"})
 	if s.auditSvc != nil {
@@ -417,6 +446,7 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 	srcFS, dstFS, fsErr := s.openJobFS(ctx, job)
 	if fsErr != nil {
 		msg := fsErr.Error()
+		runErrMsg = &msg
 		_ = s.db.UpdateJobStatus(ctx, job.ID, "error", &msg, true)
 		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
 		return
@@ -501,8 +531,11 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		},
 	})
 
+	runResult = result
+
 	if runErr != nil {
 		msg := runErr.Error()
+		runErrMsg = &msg
 		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "error", &msg, true)
 		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
 		if s.auditSvc != nil {
@@ -512,6 +545,7 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 	}
 
 	if result.Paused {
+		runOutcome = "paused"
 		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "paused", nil, false)
 		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "paused"})
 		if s.auditSvc != nil {
@@ -522,6 +556,7 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 
 	if len(result.Errors) > 0 {
 		msg := fmt.Sprintf("%d file(s) failed: %v", len(result.Errors), result.Errors[0].Err)
+		runErrMsg = &msg
 		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "error", &msg, true)
 		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
 		if s.auditSvc != nil {
@@ -530,6 +565,7 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		return
 	}
 
+	runOutcome = "completed"
 	total := result.FilesCopied + result.FilesSkipped
 	_ = s.db.UpdateJobStatus(context.Background(), job.ID, "idle", nil, true)
 	s.hub.Broadcast(ws.Event{
