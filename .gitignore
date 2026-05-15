@@ -8,7 +8,10 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 frontend/playwright-report/
-frontend/test-results/
+
+# Test artefacts (Playwright / Go) — produced by `npm run test:e2e` and
+# similar; never checked in.
+test-results/
 
 # Database files
 *.db
@@ -21,6 +24,7 @@ frontend/test-results/
 tidemarq.yaml.local
 tidemarq.local.yaml
 tidemarq.dev.yaml
+tidemarq.e2e.yaml
 tidemarq.yaml.bak
 
 # TLS certificates (auto-generated)
@@ -32,6 +36,7 @@ tidemarq.yaml.bak
 data/
 dev-data/
 backend/dev-data/
+backend/e2e-data/
 
 # OS
 .DS_Store
