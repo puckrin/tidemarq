@@ -9,10 +9,16 @@ export interface FileActivity {
 }
 
 export interface JobProgressState {
+  /** "scanning" | "comparing" | "transferring" | "verifying" | ''. */
+  phase: string
   filesDone: number
   filesTotal: number
   filesSkipped: number
-  bytesDone: number
+  filesScanned: number
+  bytesScanned: number
+  bytesDone: number      // mirror of bytesCopied; retained so older code paths keep working
+  bytesReviewed: number
+  bytesCopied: number
   rateKBs: number
   etaSecs: number
   currentFile: string
@@ -22,10 +28,15 @@ export interface JobProgressState {
 }
 
 const DEFAULT_STATE: JobProgressState = {
+  phase: '',
   filesDone: 0,
   filesTotal: 0,
   filesSkipped: 0,
+  filesScanned: 0,
+  bytesScanned: 0,
   bytesDone: 0,
+  bytesReviewed: 0,
+  bytesCopied: 0,
   rateKBs: 0,
   etaSecs: 0,
   currentFile: '',
@@ -85,12 +96,20 @@ export function JobProgressProvider({ children }: { children: React.ReactNode })
         }
       }
       updated = {
-        filesDone:    e.files_done    ?? existing.filesDone,
-        filesTotal:   e.files_total   ?? existing.filesTotal,
-        filesSkipped: e.files_skipped ?? existing.filesSkipped,
-        bytesDone:    e.bytes_done    ?? existing.bytesDone,
-        rateKBs:      e.rate_kbs      ?? existing.rateKBs,
-        etaSecs:      e.eta_secs      ?? existing.etaSecs,
+        // Phase is set on every progress event, but during the scanning phase the
+        // server emits frequent events with no per-file context — keep the previous
+        // phase value if the new event left it empty so the label doesn't flicker.
+        phase:         e.phase || existing.phase,
+        filesDone:     e.files_done     ?? existing.filesDone,
+        filesTotal:    e.files_total    ?? existing.filesTotal,
+        filesSkipped:  e.files_skipped  ?? existing.filesSkipped,
+        filesScanned:  e.files_scanned  ?? existing.filesScanned,
+        bytesScanned:  e.bytes_scanned  ?? existing.bytesScanned,
+        bytesDone:     e.bytes_done     ?? existing.bytesDone,
+        bytesReviewed: e.bytes_reviewed ?? existing.bytesReviewed,
+        bytesCopied:   e.bytes_copied   ?? existing.bytesCopied,
+        rateKBs:       e.rate_kbs       ?? existing.rateKBs,
+        etaSecs:       e.eta_secs       ?? existing.etaSecs,
         // currentFile / currentAction only track in-progress state:
         // 'scanning' (evaluating) and 'copying' (bytes moving).
         // Completion events ('copied', 'skipped', 'removing') only feed the

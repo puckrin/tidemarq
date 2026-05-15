@@ -93,7 +93,29 @@ export function JobDetailView({ jobId, onNav }: Props) {
   if (!job) return <div className="text3" style={{ padding: 24 }}>Loading…</div>
 
   const isRunning = job.status === 'running'
-  const pct = progress.filesTotal > 0 ? Math.round(progress.filesDone / progress.filesTotal * 100) : 0
+
+  // Bar % prefers bytes (bytesReviewed / bytesScanned) so the bar reflects real work
+  // done on uneven file sizes. It falls back to the file count during the scanning
+  // phase, or before any bytes have been observed.
+  const pct = (() => {
+    if (progress.bytesScanned > 0 && progress.bytesReviewed >= 0) {
+      return Math.min(100, Math.round(progress.bytesReviewed / progress.bytesScanned * 100))
+    }
+    if (progress.filesTotal > 0) {
+      return Math.round(progress.filesDone / progress.filesTotal * 100)
+    }
+    return 0
+  })()
+
+  const phaseLabel = (() => {
+    switch (progress.phase) {
+      case 'scanning':     return 'Scanning files…'
+      case 'comparing':    return 'Comparing'
+      case 'transferring': return 'Transferring'
+      case 'verifying':    return 'Verifying'
+      default:             return ''
+    }
+  })()
 
   // If the WS 'completed'/'error'/'paused' event was missed (connection timing, page refresh,
   // etc.), lastEvent stays at 'progress' or 'started' even after the job goes idle.
@@ -160,6 +182,15 @@ export function JobDetailView({ jobId, onNav }: Props) {
             )}
           </div>
 
+          {/* Phase label sits directly above the bar so the user can name the activity
+              they're watching. During scanning the percentage is meaningless — we'd
+              be dividing by a growing denominator — so the bar is suppressed. */}
+          {isRunning && phaseLabel && (
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6, fontWeight: 500 }}>
+              {phaseLabel}
+            </div>
+          )}
+
           <ProgressBar pct={pct} height={8} />
 
           {/* Current file indicator — shows during scanning (evaluating), copying (bytes moving),
@@ -183,17 +214,30 @@ export function JobDetailView({ jobId, onNav }: Props) {
             </div>
           )}
 
-          {/* Stats row */}
+          {/* Stats row. Reviewed and Copied are reported separately so the user can
+              tell at a glance "we looked at X, only Y bytes were actually written."
+              During scanning, totals are not yet known so Reviewed shows the running
+              discovery count and Copied stays at —. */}
           <div className="run-stats">
             <div>
               <div className="run-stat-label">Files Done</div>
               <div className="run-stat-val">
-                {progress.filesDone} / {progress.filesTotal > 0 ? progress.filesTotal : '?'}
+                {progress.filesDone} / {progress.filesTotal > 0 ? progress.filesTotal : (progress.filesScanned > 0 ? `${progress.filesScanned}…` : '?')}
               </div>
             </div>
             <div>
-              <div className="run-stat-label">Unchanged</div>
-              <div className="run-stat-val">{progress.filesSkipped}</div>
+              <div className="run-stat-label">Reviewed</div>
+              <div className="run-stat-val">
+                {progress.bytesScanned > 0
+                  ? `${fmtBytes(progress.bytesReviewed)} / ${fmtBytes(progress.bytesScanned)}`
+                  : (progress.bytesReviewed > 0 ? fmtBytes(progress.bytesReviewed) : '—')}
+              </div>
+            </div>
+            <div>
+              <div className="run-stat-label">Copied</div>
+              <div className="run-stat-val">
+                {progress.bytesCopied > 0 ? fmtBytes(progress.bytesCopied) : '—'}
+              </div>
             </div>
             <div>
               <div className="run-stat-label">Transfer Rate</div>
@@ -202,18 +246,25 @@ export function JobDetailView({ jobId, onNav }: Props) {
               </div>
             </div>
             <div>
-              <div className="run-stat-label">Data Moved</div>
-              <div className="run-stat-val">
-                {progress.bytesDone > 0 ? fmtBytes(progress.bytesDone) : '—'}
-              </div>
-            </div>
-            <div>
               <div className="run-stat-label">Remaining</div>
               <div className="run-stat-val">
-                {progress.etaSecs > 0 ? `~${Math.ceil(progress.etaSecs/60)} min` : '—'}
+                {!isRunning
+                  ? '—'
+                  : progress.etaSecs > 0
+                    ? `~${Math.ceil(progress.etaSecs/60)} min`
+                    : 'Calculating…'}
               </div>
             </div>
           </div>
+
+          {/* Completion summary — "Reviewed X · Copied Y · N files unchanged" so the
+              user understands what actually happened on a no-change or partial run. */}
+          {!isRunning && terminalEvent === 'completed' && (progress.bytesReviewed > 0 || progress.filesSkipped > 0) && (
+            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text2)' }}>
+              Reviewed {fmtBytes(progress.bytesReviewed)} · Copied {fmtBytes(progress.bytesCopied)}
+              {progress.filesSkipped > 0 ? ` · ${progress.filesSkipped} files unchanged` : ''}
+            </div>
+          )}
 
           {/* Recent file activity */}
           {progress.recentFiles.length > 0 && (
