@@ -464,6 +464,15 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		lastScanEvent   time.Time
 	)
 
+	// Seed the ETA tracker with the duration of the most recent successful run, if any.
+	// On the very first run this is zero and EstimateETA returns 0 until enough
+	// samples accumulate (the UI shows "Calculating…" during that window).
+	var priorDuration time.Duration
+	if last, err := s.db.LatestJobRun(ctx, job.ID); err == nil && last != nil {
+		priorDuration = last.EndedAt.Sub(last.StartedAt)
+	}
+	etaTrk := newETATracker(priorDuration)
+
 	result, runErr := s.engine.Run(ctx, engine.Config{
 		JobID:            job.ID,
 		Mode:             job.Mode,
@@ -506,10 +515,13 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 			})
 		},
 		OnProgress: func(p engine.Progress) {
-			eta := 0
-			if p.RateKBs > 0 && p.BytesDone > 0 && p.FilesTotal > p.FilesDone {
-				remaining := int64(p.FilesTotal-p.FilesDone) * (p.BytesDone / int64(p.FilesDone+1))
-				eta = int(float64(remaining) / 1024 / p.RateKBs)
+			etaTrk.Update(p.BytesReviewed)
+			// During the scanning phase we don't yet know BytesScanned's final value
+			// (it's still growing), so any ETA computed from "remaining" would be
+			// misleading. Let the UI render "Calculating…" instead.
+			etaSecs := 0
+			if p.Phase != engine.PhaseScanning && p.BytesScanned > 0 {
+				etaSecs = etaTrk.EstimateETA(p.BytesReviewed, p.BytesScanned)
 			}
 			s.hub.Broadcast(ws.Event{
 				JobID:         job.ID,
@@ -524,7 +536,7 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 				BytesReviewed: p.BytesReviewed,
 				BytesCopied:   p.BytesCopied,
 				RateKBs:       p.RateKBs,
-				ETASecs:       eta,
+				ETASecs:       etaSecs,
 				CurrentFile:   p.CurrentFile,
 				FileAction:    p.FileAction,
 			})
