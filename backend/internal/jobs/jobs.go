@@ -400,17 +400,17 @@ func (s *Service) openJobFS(ctx context.Context, job *db.Job) (srcFS, dstFS moun
 
 // execRun is the goroutine body for a single job execution.
 func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{}, cancel context.CancelFunc) {
-	defer cancel()
-	defer func() {
-		s.mu.Lock()
-		delete(s.running, job.ID)
-		s.mu.Unlock()
-	}()
-
 	// Capture the run's outcome for persistence. The terminal branches below set
 	// runOutcome, runErrMsg and runResult before returning; the deferred writer
 	// uses whatever state was last assigned. Default to "error" so an unhandled
 	// early return is recorded rather than silently dropped.
+	//
+	// IMPORTANT: this defer must be declared *before* the running-map cleanup so
+	// LIFO ordering causes the slow DB write to run *after* the id is removed
+	// from s.running. Otherwise Pause→Resume races: the status has flipped to
+	// "paused" (visible to test polling), but the resume call hits s.Run while
+	// CreateJobRun is still writing and the id is still in the running map,
+	// returning ErrAlreadyRunning (409).
 	startedAt := time.Now()
 	runOutcome := "error"
 	var runErrMsg *string
@@ -434,6 +434,13 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		if _, err := s.db.CreateJobRun(context.Background(), params); err != nil {
 			log.Printf("jobs: persist job_run for job %d: %v", job.ID, err)
 		}
+	}()
+
+	defer cancel()
+	defer func() {
+		s.mu.Lock()
+		delete(s.running, job.ID)
+		s.mu.Unlock()
 	}()
 
 	_ = s.db.UpdateJobStatus(ctx, job.ID, "running", nil, false)
