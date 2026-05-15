@@ -24,6 +24,16 @@ import (
 // errMidFilePause is returned by syncFile when a pause fires during a file transfer.
 var errMidFilePause = errors.New("paused mid-file")
 
+// Phase labels describe the dominant activity at the moment a Progress event is emitted.
+// The UI uses these to give the user an accurate picture of what the engine is doing
+// rather than conflating compare-and-skip work with actual byte transfer.
+const (
+	PhaseScanning     = "scanning"     // walking the source tree; totals not yet known
+	PhaseComparing    = "comparing"    // evaluating a file (metadata or hash) without writing
+	PhaseTransferring = "transferring" // bytes are actively being written to the destination
+	PhaseVerifying    = "verifying"    // post-copy hash check against the destination
+)
+
 // Config holds the parameters for a single sync run.
 type Config struct {
 	JobID            int64
@@ -64,6 +74,9 @@ type Config struct {
 	// 65536 bytes.
 	DeltaMinBytes    int64
 	OnProgress       func(Progress)   // called after each file is processed; may be nil
+	// OnScan is called periodically during the directory walk with the running count of
+	// files and bytes discovered so far. Throttled to a low rate (≈4/s). May be nil.
+	OnScan           func(filesScanned int, bytesScanned int64)
 	// OnFileStart is called immediately before a file begins evaluation (before any
 	// hashing or copy decision). It is rate-limited by the caller. May be nil.
 	OnFileStart      func(relPath string)
@@ -80,15 +93,28 @@ type Config struct {
 	ConflictsSvc     *conflicts.Service // may be nil; used to record conflicts
 }
 
-// Progress is emitted after each file is processed during a run.
+// Progress is emitted after each file is processed during a run, and periodically
+// during the scanning phase.
+//
+// Phase labels: see the Phase* constants. An empty Phase string means the event
+// pre-dates the phase-aware emitters (legacy callers should not encounter this).
+//
+// BytesReviewed and BytesCopied are reported as separate cumulative counters so the
+// UI can show "we looked at X, only Y bytes were actually written." BytesDone is kept
+// as an alias of BytesCopied for backward compatibility with existing consumers.
 type Progress struct {
-	FilesDone    int
-	FilesTotal   int
-	FilesSkipped int
-	BytesDone    int64
-	RateKBs      float64 // transfer rate over the last interval
-	CurrentFile  string  // relative path of the file just processed
-	FileAction   string  // "copied" | "skipped" | "removing" | "present"
+	Phase         string
+	FilesDone     int
+	FilesTotal    int   // final source file count; 0 during the scanning phase
+	FilesSkipped  int
+	FilesScanned  int   // running count of files discovered during scanning; frozen at the total once scan completes
+	BytesScanned  int64 // running total of source bytes discovered during scanning; frozen at the total once scan completes
+	BytesDone     int64 // alias of BytesCopied; retained so existing consumers keep working
+	BytesReviewed int64 // cumulative size of files the engine has evaluated
+	BytesCopied   int64 // cumulative bytes written to the destination
+	RateKBs       float64
+	CurrentFile   string
+	FileAction    string // "copied" | "skipped" | "removing" | "present"
 }
 
 // Result summarises the outcome of a sync run.
@@ -137,16 +163,20 @@ func (e *Engine) Run(ctx context.Context, cfg Config) (*Result, error) {
 func (e *Engine) runBackup(ctx context.Context, cfg Config) (*Result, error) {
 	srcFS, dstFS := resolveFS(cfg)
 
-	files, err := scanFS(ctx, srcFS, cfg.Workers)
+	files, err := scanFS(ctx, srcFS, cfg.Workers, scanReporter(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("scanning source: %w", err)
 	}
 
 	total := len(files)
+	var bytesToReview int64
+	for _, fi := range files {
+		bytesToReview += fi.Size
+	}
 	result := &Result{}
 	var mu sync.Mutex
 	done := 0
-	var bytesDone int64
+	var bytesReviewed, bytesCopied int64
 	rt := &rateTracker{start: time.Now()}
 
 	for _, fi := range files {
@@ -159,16 +189,25 @@ func (e *Engine) runBackup(ctx context.Context, cfg Config) (*Result, error) {
 
 		// Attach a per-file mid-copy progress callback so stats update during large
 		// file transfers, not just after each file completes.
-		prevBytes := bytesDone
+		prevReviewed := bytesReviewed
+		prevCopied := bytesCopied
 		fileCfg := cfg
 		fileCfg.OnCopyProgress = func(bytesSoFar int64) {
-			partial := prevBytes + bytesSoFar
+			// Inside the streaming copy, source bytes read == destination bytes written
+			// (TeeReader). Both reviewed and copied advance in lockstep here.
+			partialReviewed := prevReviewed + bytesSoFar
+			partialCopied := prevCopied + bytesSoFar
 			emitProgress(cfg.OnProgress, Progress{
-				FilesDone:    done,
-				FilesTotal:   total,
-				FilesSkipped: result.FilesSkipped,
-				BytesDone:    partial,
-				RateKBs:      rt.rate(partial),
+				Phase:         PhaseTransferring,
+				FilesDone:     done,
+				FilesTotal:    total,
+				FilesSkipped:  result.FilesSkipped,
+				FilesScanned:  total,
+				BytesScanned:  bytesToReview,
+				BytesDone:     partialCopied,
+				BytesReviewed: partialReviewed,
+				BytesCopied:   partialCopied,
+				RateKBs:       rt.rate(partialCopied),
 			})
 		}
 
@@ -187,21 +226,29 @@ func (e *Engine) runBackup(ctx context.Context, cfg Config) (*Result, error) {
 			result.BytesCopied += written
 		}
 		done++
-		bytesDone += written
+		bytesReviewed += fi.Size
+		bytesCopied += written
 		mu.Unlock()
 
 		action := "skipped"
+		phase := PhaseComparing
 		if copied > 0 {
 			action = "copied"
+			phase = PhaseTransferring
 		}
 		emitProgress(cfg.OnProgress, Progress{
-			FilesDone:    done,
-			FilesTotal:   total,
-			FilesSkipped: result.FilesSkipped,
-			BytesDone:    bytesDone,
-			RateKBs:      rt.rate(bytesDone),
-			CurrentFile:  fi.RelPath,
-			FileAction:   action,
+			Phase:         phase,
+			FilesDone:     done,
+			FilesTotal:    total,
+			FilesSkipped:  result.FilesSkipped,
+			FilesScanned:  total,
+			BytesScanned:  bytesToReview,
+			BytesDone:     bytesCopied,
+			BytesReviewed: bytesReviewed,
+			BytesCopied:   bytesCopied,
+			RateKBs:       rt.rate(bytesCopied),
+			CurrentFile:   fi.RelPath,
+			FileAction:    action,
 		})
 	}
 	return result, nil
@@ -214,11 +261,11 @@ func (e *Engine) runBackup(ctx context.Context, cfg Config) (*Result, error) {
 func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 	srcFS, dstFS := resolveFS(cfg)
 
-	srcFiles, err := scanFS(ctx, srcFS, cfg.Workers)
+	srcFiles, err := scanFS(ctx, srcFS, cfg.Workers, scanReporter(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("scanning source: %w", err)
 	}
-	destFiles, err := scanFS(ctx, dstFS, cfg.Workers)
+	destFiles, err := scanFS(ctx, dstFS, cfg.Workers, nil)
 	if err != nil {
 		return nil, fmt.Errorf("scanning destination: %w", err)
 	}
@@ -234,10 +281,14 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 		}
 	}
 	total := len(srcFiles) + destOnlyCount
+	var bytesToReview int64
+	for _, fi := range srcFiles {
+		bytesToReview += fi.Size
+	}
 
 	result := &Result{}
 	done := 0
-	var bytesDone int64
+	var bytesReviewed, bytesCopied int64
 	rt := &rateTracker{start: time.Now()}
 
 	// Copy new/changed source files to destination.
@@ -251,16 +302,23 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 
 		// Attach a per-file mid-copy progress callback so stats update during large
 		// file transfers, not just after each file completes.
-		prevBytes := bytesDone
+		prevReviewed := bytesReviewed
+		prevCopied := bytesCopied
 		fileCfg := cfg
 		fileCfg.OnCopyProgress = func(bytesSoFar int64) {
-			partial := prevBytes + bytesSoFar
+			partialReviewed := prevReviewed + bytesSoFar
+			partialCopied := prevCopied + bytesSoFar
 			emitProgress(cfg.OnProgress, Progress{
-				FilesDone:    done,
-				FilesTotal:   total,
-				FilesSkipped: result.FilesSkipped,
-				BytesDone:    partial,
-				RateKBs:      rt.rate(partial),
+				Phase:         PhaseTransferring,
+				FilesDone:     done,
+				FilesTotal:    total,
+				FilesSkipped:  result.FilesSkipped,
+				FilesScanned:  total,
+				BytesScanned:  bytesToReview,
+				BytesDone:     partialCopied,
+				BytesReviewed: partialReviewed,
+				BytesCopied:   partialCopied,
+				RateKBs:       rt.rate(partialCopied),
 			})
 		}
 
@@ -277,19 +335,27 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 			result.BytesCopied += written
 		}
 		done++
-		bytesDone += written
+		bytesReviewed += fi.Size
+		bytesCopied += written
 		action := "skipped"
+		phase := PhaseComparing
 		if copied > 0 {
 			action = "copied"
+			phase = PhaseTransferring
 		}
 		emitProgress(cfg.OnProgress, Progress{
-			FilesDone:    done,
-			FilesTotal:   total,
-			FilesSkipped: result.FilesSkipped,
-			BytesDone:    bytesDone,
-			RateKBs:      rt.rate(bytesDone),
-			CurrentFile:  fi.RelPath,
-			FileAction:   action,
+			Phase:         phase,
+			FilesDone:     done,
+			FilesTotal:    total,
+			FilesSkipped:  result.FilesSkipped,
+			FilesScanned:  total,
+			BytesScanned:  bytesToReview,
+			BytesDone:     bytesCopied,
+			BytesReviewed: bytesReviewed,
+			BytesCopied:   bytesCopied,
+			RateKBs:       rt.rate(bytesCopied),
+			CurrentFile:   fi.RelPath,
+			FileAction:    action,
 		})
 	}
 
@@ -322,9 +388,18 @@ func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 		}
 		done++
 		emitProgress(cfg.OnProgress, Progress{
-			FilesDone: done, FilesTotal: total, FilesSkipped: result.FilesSkipped,
-			BytesDone: bytesDone, RateKBs: rt.rate(bytesDone),
-			CurrentFile: destFi.RelPath, FileAction: "removing",
+			Phase:         PhaseComparing,
+			FilesDone:     done,
+			FilesTotal:    total,
+			FilesSkipped:  result.FilesSkipped,
+			FilesScanned:  total,
+			BytesScanned:  bytesToReview,
+			BytesDone:     bytesCopied,
+			BytesReviewed: bytesReviewed,
+			BytesCopied:   bytesCopied,
+			RateKBs:       rt.rate(bytesCopied),
+			CurrentFile:   destFi.RelPath,
+			FileAction:    "removing",
 		})
 	}
 
@@ -340,11 +415,11 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, fmt.Errorf("two-way sync with network mounts is not yet supported; use one-way-backup or one-way-mirror")
 	}
 
-	srcFiles, err := scanDir(ctx, cfg.SourcePath, cfg.Workers)
+	srcFiles, err := scanDir(ctx, cfg.SourcePath, cfg.Workers, scanReporter(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("scanning source: %w", err)
 	}
-	destFiles, err := scanDir(ctx, cfg.DestinationPath, cfg.Workers)
+	destFiles, err := scanDir(ctx, cfg.DestinationPath, cfg.Workers, nil)
 	if err != nil {
 		return nil, fmt.Errorf("scanning destination: %w", err)
 	}
@@ -365,9 +440,18 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 		}
 	}
 	total := len(srcFiles) + destOnlyCount
+	var bytesToReview int64
+	for _, fi := range srcFiles {
+		bytesToReview += fi.Size
+	}
+	for _, df := range destFiles {
+		if _, inSrc := srcIndex[df.RelPath]; !inSrc {
+			bytesToReview += df.Size
+		}
+	}
 	result := &Result{}
 	done := 0
-	var bytesDone int64
+	var bytesReviewed int64 // local mirror; bytesCopied lives on result.BytesCopied
 	rt := &rateTracker{start: time.Now()}
 
 	algo := effectiveAlgo(cfg)
@@ -506,13 +590,19 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 		}
 
 		done++
+		bytesReviewed += srcFi.Size
 		emitProgress(cfg.OnProgress, Progress{
-			FilesDone:    done,
-			FilesTotal:   total,
-			FilesSkipped: result.FilesSkipped,
-			BytesDone:    bytesDone,
-			RateKBs:      rt.rate(bytesDone),
-			CurrentFile:  srcFi.RelPath,
+			Phase:         twoWayPhase(result.BytesCopied),
+			FilesDone:     done,
+			FilesTotal:    total,
+			FilesSkipped:  result.FilesSkipped,
+			FilesScanned:  total,
+			BytesScanned:  bytesToReview,
+			BytesDone:     result.BytesCopied,
+			BytesReviewed: bytesReviewed,
+			BytesCopied:   result.BytesCopied,
+			RateKBs:       rt.rate(result.BytesCopied),
+			CurrentFile:   srcFi.RelPath,
 		})
 	}
 
@@ -572,17 +662,34 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 		}
 
 		done++
+		bytesReviewed += destFi.Size
 		emitProgress(cfg.OnProgress, Progress{
-			FilesDone:    done,
-			FilesTotal:   total,
-			FilesSkipped: result.FilesSkipped,
-			BytesDone:    bytesDone,
-			RateKBs:      rt.rate(bytesDone),
-			CurrentFile:  destFi.RelPath,
+			Phase:         twoWayPhase(result.BytesCopied),
+			FilesDone:     done,
+			FilesTotal:    total,
+			FilesSkipped:  result.FilesSkipped,
+			FilesScanned:  total,
+			BytesScanned:  bytesToReview,
+			BytesDone:     result.BytesCopied,
+			BytesReviewed: bytesReviewed,
+			BytesCopied:   result.BytesCopied,
+			RateKBs:       rt.rate(result.BytesCopied),
+			CurrentFile:   destFi.RelPath,
 		})
 	}
 
 	return result, nil
+}
+
+// twoWayPhase reports the current phase for two-way sync progress events.
+// Two-way doesn't have a clean phase boundary (compare and transfer interleave per
+// file), so the heuristic is: if any bytes have been written so far, we're at least
+// partially in the transferring phase. Otherwise we're still comparing.
+func twoWayPhase(bytesCopied int64) string {
+	if bytesCopied > 0 {
+		return PhaseTransferring
+	}
+	return PhaseComparing
 }
 
 // handleTwoWayConflict applies the conflict strategy and records a conflict entry.
@@ -1020,6 +1127,29 @@ func checkPause(ctx context.Context, pauseCh <-chan struct{}) (paused bool, ctxE
 func emitProgress(fn func(Progress), p Progress) {
 	if fn != nil {
 		fn(p)
+	}
+}
+
+// scanReporter returns the callback handed to scanFS/scanDir during the scanning
+// phase. It fans out to cfg.OnScan (for callers that want raw counts) and to
+// cfg.OnProgress (so the standard progress channel sees scan-phase events with
+// Phase=PhaseScanning and running scan totals). Returns nil when neither callback
+// is set, so the scanner can skip throttling work entirely.
+func scanReporter(cfg Config) func(int, int64) {
+	if cfg.OnScan == nil && cfg.OnProgress == nil {
+		return nil
+	}
+	return func(filesScanned int, bytesScanned int64) {
+		if cfg.OnScan != nil {
+			cfg.OnScan(filesScanned, bytesScanned)
+		}
+		if cfg.OnProgress != nil {
+			cfg.OnProgress(Progress{
+				Phase:        PhaseScanning,
+				FilesScanned: filesScanned,
+				BytesScanned: bytesScanned,
+			})
+		}
 	}
 }
 

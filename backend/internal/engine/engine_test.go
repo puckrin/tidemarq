@@ -1017,3 +1017,107 @@ func TestEngine_DeltaTransfer_MultipleRuns(t *testing.T) {
 		}
 	}
 }
+
+// TestEngine_ProgressPhasesAndCounters verifies that progress events carry the
+// expected phase labels and that BytesReviewed/BytesCopied are tracked separately:
+// first run copies everything (Reviewed == Copied), second run skips everything
+// (Reviewed == total source bytes, Copied == 0).
+func TestEngine_ProgressPhasesAndCounters(t *testing.T) {
+	eng, jobID, src, dst := testEnv(t)
+
+	contents := map[string]string{
+		"a.txt":       "hello world",      // 11 bytes
+		"sub/b.txt":   "and another file", // 16 bytes
+		"sub/c/d.txt": "deeper",           // 6 bytes
+	}
+	var srcTotal int64
+	for rel, c := range contents {
+		writeFile(t, filepath.Join(src, filepath.FromSlash(rel)), c)
+		srcTotal += int64(len(c))
+	}
+
+	var events []engine.Progress
+	cfg := engine.Config{
+		JobID:           jobID,
+		SourcePath:      src,
+		DestinationPath: dst,
+		OnProgress: func(p engine.Progress) {
+			events = append(events, p)
+		},
+	}
+
+	first, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if first.BytesCopied != srcTotal {
+		t.Errorf("first run: BytesCopied = %d, want %d", first.BytesCopied, srcTotal)
+	}
+
+	// Phase coverage: scanning event should fire before any comparing/transferring.
+	var sawScanning, sawTransferring bool
+	for _, e := range events {
+		switch e.Phase {
+		case engine.PhaseScanning:
+			sawScanning = true
+		case engine.PhaseTransferring:
+			sawTransferring = true
+		}
+	}
+	if !sawScanning {
+		t.Error("first run: expected at least one PhaseScanning event")
+	}
+	if !sawTransferring {
+		t.Error("first run: expected at least one PhaseTransferring event")
+	}
+
+	// Final progress event should carry the cumulative totals.
+	last := events[len(events)-1]
+	if last.BytesReviewed != srcTotal {
+		t.Errorf("first run final: BytesReviewed = %d, want %d", last.BytesReviewed, srcTotal)
+	}
+	if last.BytesCopied != srcTotal {
+		t.Errorf("first run final: BytesCopied = %d, want %d", last.BytesCopied, srcTotal)
+	}
+	if last.BytesDone != last.BytesCopied {
+		t.Errorf("first run final: BytesDone (%d) should mirror BytesCopied (%d)", last.BytesDone, last.BytesCopied)
+	}
+
+	// Second run: nothing changed, everything should be evaluated but nothing copied.
+	events = nil
+	second, err := eng.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if second.FilesCopied != 0 {
+		t.Errorf("second run: FilesCopied = %d, want 0", second.FilesCopied)
+	}
+	if second.FilesSkipped != len(contents) {
+		t.Errorf("second run: FilesSkipped = %d, want %d", second.FilesSkipped, len(contents))
+	}
+
+	// On a no-change run, the per-file events should all carry PhaseComparing.
+	var perFileEvents []engine.Progress
+	for _, e := range events {
+		if e.CurrentFile != "" {
+			perFileEvents = append(perFileEvents, e)
+		}
+	}
+	if len(perFileEvents) == 0 {
+		t.Fatal("second run: no per-file progress events captured")
+	}
+	for _, e := range perFileEvents {
+		if e.Phase != engine.PhaseComparing {
+			t.Errorf("second run: per-file event for %q has Phase=%q, want %q", e.CurrentFile, e.Phase, engine.PhaseComparing)
+		}
+	}
+
+	// And the cumulative counters should show "looked at everything, copied nothing."
+	last = events[len(events)-1]
+	if last.BytesReviewed != srcTotal {
+		t.Errorf("second run final: BytesReviewed = %d, want %d (review everything)", last.BytesReviewed, srcTotal)
+	}
+	if last.BytesCopied != 0 {
+		t.Errorf("second run final: BytesCopied = %d, want 0 (nothing changed)", last.BytesCopied)
+	}
+}

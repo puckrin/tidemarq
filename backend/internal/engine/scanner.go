@@ -24,7 +24,9 @@ const defaultWorkers = 8
 
 // scanFS walks a MountFS recursively and returns FileInfo for every regular file.
 // Subdirectory enumeration is parallelised across a bounded goroutine pool.
-func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int) ([]FileInfo, error) {
+// onScan is invoked periodically with the running count of files and bytes
+// discovered so far; it is throttled internally and may be nil.
+func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int, onScan func(int, int64)) ([]FileInfo, error) {
 	if workers <= 0 {
 		workers = defaultWorkers
 	}
@@ -37,11 +39,24 @@ func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int) ([]FileInfo, 
 	workCh := make(chan work, 256)
 
 	var (
-		wg       sync.WaitGroup
-		mu       sync.Mutex
-		results  []FileInfo
-		firstErr error
+		wg            sync.WaitGroup
+		mu            sync.Mutex
+		results       []FileInfo
+		bytesSeen     int64
+		firstErr      error
+		lastEmit      time.Time
 	)
+
+	emit := func() {
+		if onScan == nil {
+			return
+		}
+		if time.Since(lastEmit) < 250*time.Millisecond {
+			return
+		}
+		lastEmit = time.Now()
+		onScan(len(results), bytesSeen)
+	}
 
 	// File-stat workers.
 	for i := 0; i < workers; i++ {
@@ -62,6 +77,8 @@ func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int) ([]FileInfo, 
 						ModTime:     w.info.ModTime,
 						Permissions: w.info.Mode.Perm(),
 					})
+					bytesSeen += w.info.Size
+					emit()
 					mu.Unlock()
 				case <-ctx.Done():
 					return
@@ -119,6 +136,10 @@ func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int) ([]FileInfo, 
 	if firstErr != nil {
 		return nil, firstErr
 	}
+	// Final emit so the caller always sees the completed totals after the walk ends.
+	if onScan != nil {
+		onScan(len(results), bytesSeen)
+	}
 	return results, nil
 }
 
@@ -128,8 +149,14 @@ func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int) ([]FileInfo, 
 // single-threaded WalkDir traversal itself — a goroutine pool adds overhead
 // without benefit here. The workers parameter is accepted but unused; it
 // remains for API compatibility with callers that pass cfg.Workers.
-func scanDir(ctx context.Context, root string, _ int) ([]FileInfo, error) {
-	var results []FileInfo
+// onScan is invoked periodically with the running count of files and bytes
+// discovered so far; it is throttled internally and may be nil.
+func scanDir(ctx context.Context, root string, _ int, onScan func(int, int64)) ([]FileInfo, error) {
+	var (
+		results   []FileInfo
+		bytesSeen int64
+		lastEmit  time.Time
+	)
 
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -161,11 +188,19 @@ func scanDir(ctx context.Context, root string, _ int) ([]FileInfo, error) {
 			ModTime:     info.ModTime(),
 			Permissions: info.Mode().Perm(),
 		})
+		bytesSeen += info.Size()
+		if onScan != nil && time.Since(lastEmit) >= 250*time.Millisecond {
+			lastEmit = time.Now()
+			onScan(len(results), bytesSeen)
+		}
 		return nil
 	})
 
 	if walkErr != nil {
 		return nil, walkErr
+	}
+	if onScan != nil {
+		onScan(len(results), bytesSeen)
 	}
 	return results, nil
 }
