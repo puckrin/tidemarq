@@ -18,12 +18,16 @@ services:
       #   - /srv/documents:/mnt/documents:ro
       #   - /srv/backups:/mnt/backups
 
-    environment:
-      # Set the admin password for the account created on first start.
-      # Must be at least 8 characters. Change immediately after first login.
-      # - TIDEMARQ_ADMIN_PASSWORD=changeme
-
-      # Mount tidemarq.example.yaml as a config file only if you need advanced options
-      # (custom ports, bring-your-own TLS certificate, stable JWT secret).
-      # - TIDEMARQ_CONFIG=/etc/tidemarq/tidemarq.yaml
     restart: unless-stopped
+
+    # The default admin account is created on first start with username `admin`
+    # and password `admin123`. Log in at https://localhost:8717 and change the
+    # password immediately via Settings → Users.
+    #
+    # For advanced configuration (custom ports, bring-your-own TLS certificate,
+    # stable JWT secret), mount tidemarq.example.yaml from
+    # https://github.com/puckrin/tidemarq/blob/main/tidemarq.example.yaml and
+    # add an `environment:` block pointing at it, e.g.:
+    #
+    # environment:
+    #   - TIDEMARQ_CONFIG=/etc/tidemarq/tidemarq.yaml

@@ -48,7 +48,7 @@ Simple to deploy. Nothing to install on the remote. Always correct.
 
 ## Running tidemarq
 
-No git clone required. Download [`docker-compose.yml`](https://github.com/puckrin/tidemarq/releases/latest/download/docker-compose.yml) and run:
+No git clone required. Grab [`docker-compose.yml`](https://github.com/puckrin/tidemarq/blob/main/docker-compose.yml) from the repository and run:
 
 ```bash
 docker compose up
@@ -85,13 +85,13 @@ npm install && npm run dev
 
 ### First start
 
-Set your admin password before starting by uncommenting `TIDEMARQ_ADMIN_PASSWORD` in `docker-compose.yml`. On first start tidemarq will:
+On first start tidemarq will:
 
-- Create a default admin account — username `admin`, password from `TIDEMARQ_ADMIN_PASSWORD` (default `admin123`). **Change this immediately after login via Settings → Users.**
+- Create a default admin account — username `admin`, password `admin123`. **Log in and change this immediately via Settings → Users.**
 - Auto-generate a TLS certificate if none is configured
 - Auto-generate a JWT signing secret stored in `<data_dir>/.jwt_secret`
 
-No manual token generation is required.
+No manual token generation is required. The admin username and password can be overridden by mounting `tidemarq.example.yaml` as a config file — see [advanced configuration](tidemarq.example.yaml) — but this is optional and not recommended for interactive deployments.
 
 ### Persistent data
 
