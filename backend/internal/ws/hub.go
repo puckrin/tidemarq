@@ -9,18 +9,31 @@ import (
 )
 
 // Event is a progress or lifecycle notification broadcast to all WS clients.
+//
+// Phase is the engine's current activity ("scanning", "comparing", "transferring",
+// "verifying") and lets the UI label the progress bar honestly rather than
+// conflating compare-and-skip work with actual byte transfer.
+//
+// BytesReviewed and BytesCopied are cumulative counters reported separately so the
+// UI can show "we looked at X, only Y bytes were actually written." BytesDone is
+// retained as an alias of BytesCopied so older consumers keep working.
 type Event struct {
-	JobID        int64   `json:"job_id"`
-	Event        string  `json:"event"` // "started","progress","paused","completed","error","conflict_resolved"
-	FilesDone    int     `json:"files_done,omitempty"`
-	FilesTotal   int     `json:"files_total,omitempty"`
-	FilesSkipped int     `json:"files_skipped,omitempty"`
-	BytesDone    int64   `json:"bytes_done,omitempty"`
-	RateKBs      float64 `json:"rate_kbs,omitempty"`
-	ETASecs      int     `json:"eta_secs,omitempty"`
-	CurrentFile  string  `json:"current_file,omitempty"`
-	FileAction   string  `json:"file_action,omitempty"` // "scanning","copying","copied","skipped","removing","present"
-	Message      string  `json:"message,omitempty"`
+	JobID         int64   `json:"job_id"`
+	Event         string  `json:"event"` // "started","progress","paused","completed","error","conflict_resolved"
+	Phase         string  `json:"phase,omitempty"`
+	FilesDone     int     `json:"files_done,omitempty"`
+	FilesTotal    int     `json:"files_total,omitempty"`
+	FilesSkipped  int     `json:"files_skipped,omitempty"`
+	FilesScanned  int     `json:"files_scanned,omitempty"`
+	BytesScanned  int64   `json:"bytes_scanned,omitempty"`
+	BytesDone     int64   `json:"bytes_done,omitempty"`
+	BytesReviewed int64   `json:"bytes_reviewed,omitempty"`
+	BytesCopied   int64   `json:"bytes_copied,omitempty"`
+	RateKBs       float64 `json:"rate_kbs,omitempty"`
+	ETASecs       int     `json:"eta_secs,omitempty"`
+	CurrentFile   string  `json:"current_file,omitempty"`
+	FileAction    string  `json:"file_action,omitempty"` // "scanning","copying","copied","skipped","removing","present"
+	Message       string  `json:"message,omitempty"`
 }
 
 // wsConn is the subset of *websocket.Conn used by the hub.

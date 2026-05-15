@@ -482,16 +482,21 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 				eta = int(float64(remaining) / 1024 / p.RateKBs)
 			}
 			s.hub.Broadcast(ws.Event{
-				JobID:        job.ID,
-				Event:        "progress",
-				FilesDone:    p.FilesDone,
-				FilesTotal:   p.FilesTotal,
-				FilesSkipped: p.FilesSkipped,
-				BytesDone:    p.BytesDone,
-				RateKBs:      p.RateKBs,
-				ETASecs:      eta,
-				CurrentFile:  p.CurrentFile,
-				FileAction:   p.FileAction,
+				JobID:         job.ID,
+				Event:         "progress",
+				Phase:         p.Phase,
+				FilesDone:     p.FilesDone,
+				FilesTotal:    p.FilesTotal,
+				FilesSkipped:  p.FilesSkipped,
+				FilesScanned:  p.FilesScanned,
+				BytesScanned:  p.BytesScanned,
+				BytesDone:     p.BytesDone,
+				BytesReviewed: p.BytesReviewed,
+				BytesCopied:   p.BytesCopied,
+				RateKBs:       p.RateKBs,
+				ETASecs:       eta,
+				CurrentFile:   p.CurrentFile,
+				FileAction:    p.FileAction,
 			})
 		},
 	})
