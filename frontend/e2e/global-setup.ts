@@ -20,8 +20,14 @@ import { fileURLToPath } from 'node:url'
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
 const BACKEND_URL = process.env.TIDEMARQ_URL ?? 'https://localhost:8443'
-const ADMIN_USER  = process.env.TIDEMARQ_ADMIN_USER ?? 'admin'
-const ADMIN_PASS  = process.env.TIDEMARQ_ADMIN_PASSWORD ?? 'admin'
+const ADMIN_USER  = process.env.TIDEMARQ_ADMIN_USER     ?? 'admin'
+// Seeded default; only used to bootstrap a fresh backend whose admin still
+// has password_change_required=true. After the first run this password no
+// longer exists on the backend — the admin has been rotated to TEST_PASS.
+const ADMIN_PASS  = process.env.TIDEMARQ_ADMIN_PASSWORD ?? 'admin123'
+// The password every test uses. Global-setup rotates the seeded admin onto
+// this value on first run so the suite has a single, stable credential.
+const TEST_PASS   = process.env.TIDEMARQ_TEST_PASSWORD  ?? 'tidemarq-test-12345'
 
 // Fixture source directories — already on disk, not modified by setup.
 const FIXTURES = path.resolve(__dirname, '../../backend/dev-data/test-fixtures')
@@ -85,19 +91,74 @@ function jobPayload(name: string, src: string, dst: string, mode: string, strate
   }
 }
 
+// Decode a JWT payload without verifying the signature. We only need to read
+// claims the backend put there, not trust them — the backend will re-validate
+// on every subsequent request. Returns null if the token is malformed.
+function decodeJwt(token: string): { pwd_change_required?: boolean } | null {
+  try {
+    const part = token.split('.')[1]
+    if (!part) return null
+    // base64url → base64 → utf8 JSON
+    const pad = part.length % 4 === 0 ? '' : '='.repeat(4 - (part.length % 4))
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/') + pad
+    return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'))
+  } catch {
+    return null
+  }
+}
+
 export default async function globalSetup() {
   const ctx = await playwrightRequest.newContext({ ignoreHTTPSErrors: true })
 
   // ── login ──────────────────────────────────────────────────────────────────
-  const loginResp = await ctx.post(`${BACKEND_URL}/api/v1/auth/login`, {
-    data: { username: ADMIN_USER, password: ADMIN_PASS },
-  })
-  if (!loginResp.ok()) {
-    console.warn('\n[global-setup] Backend unreachable — fixture jobs not seeded; data-dependent tests will skip.\n')
-    await ctx.dispose()
-    return
+  // Two-step bootstrap to handle the seeded admin's password_change_required
+  // flag. On a brand-new backend the admin still has password=ADMIN_PASS and
+  // the flag set; on every subsequent run the admin has password=TEST_PASS
+  // and the flag cleared. We try TEST_PASS first (the common case), then
+  // fall back to ADMIN_PASS and rotate.
+  let token = ''
+
+  const tryLogin = async (password: string) => {
+    const r = await ctx.post(`${BACKEND_URL}/api/v1/auth/login`, {
+      data: { username: ADMIN_USER, password },
+    })
+    if (!r.ok()) return null
+    return ((await r.json()) as { token: string }).token
   }
-  const token = ((await loginResp.json()) as { token: string }).token
+
+  // Invariant after this block: admin password == TEST_PASS, and `token` is
+  // a valid JWT for that account. Two paths get there:
+  //   • TEST_PASS already works → use it directly.
+  //   • Otherwise try ADMIN_PASS → if it works, rotate to TEST_PASS.
+  // The flag (if set) is cleared by change-password as a side effect.
+  const testToken = await tryLogin(TEST_PASS)
+  if (testToken && !decodeJwt(testToken)?.pwd_change_required) {
+    token = testToken
+  } else {
+    const adminToken = await tryLogin(ADMIN_PASS)
+    if (!adminToken) {
+      console.warn('\n[global-setup] Backend unreachable or admin password unknown — fixture jobs not seeded; data-dependent tests will skip.\n')
+      await ctx.dispose()
+      return
+    }
+
+    // Rotate ADMIN_PASS → TEST_PASS unconditionally (whether or not the
+    // forced-change flag is set). The helper-based tests log in with
+    // TEST_PASS; the backend must match that, or every spec times out
+    // waiting for the sidebar to render.
+    const rotateResp = await ctx.post(`${BACKEND_URL}/api/v1/auth/change-password`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      data: { current_password: ADMIN_PASS, new_password: TEST_PASS },
+    })
+    if (!rotateResp.ok()) {
+      console.warn(`\n[global-setup] Failed to rotate admin password (${rotateResp.status()}). Check that TIDEMARQ_TEST_PASSWORD is at least 8 chars and differs from TIDEMARQ_ADMIN_PASSWORD.\n`)
+      await ctx.dispose()
+      return
+    }
+    token = ((await rotateResp.json()) as { token: string }).token
+    console.log('[global-setup] Rotated admin password ADMIN_PASS → TEST_PASS (and cleared password_change_required if set).')
+  }
+
   const headers = { Authorization: `Bearer ${token}` }
 
   // ── 01 Simple Backup ──────────────────────────────────────────────────────
