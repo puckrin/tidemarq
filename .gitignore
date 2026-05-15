@@ -37,6 +37,7 @@ data/
 dev-data/
 backend/dev-data/
 backend/e2e-data/
+backend/.preview-data/
 
 # OS
 .DS_Store

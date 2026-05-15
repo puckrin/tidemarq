@@ -400,6 +400,42 @@ func (s *Service) openJobFS(ctx context.Context, job *db.Job) (srcFS, dstFS moun
 
 // execRun is the goroutine body for a single job execution.
 func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{}, cancel context.CancelFunc) {
+	// Capture the run's outcome for persistence. The terminal branches below set
+	// runOutcome, runErrMsg and runResult before returning; the deferred writer
+	// uses whatever state was last assigned. Default to "error" so an unhandled
+	// early return is recorded rather than silently dropped.
+	//
+	// IMPORTANT: this defer must be declared *before* the running-map cleanup so
+	// LIFO ordering causes the slow DB write to run *after* the id is removed
+	// from s.running. Otherwise Pause→Resume races: the status has flipped to
+	// "paused" (visible to test polling), but the resume call hits s.Run while
+	// CreateJobRun is still writing and the id is still in the running map,
+	// returning ErrAlreadyRunning (409).
+	startedAt := time.Now()
+	runOutcome := "error"
+	var runErrMsg *string
+	var runResult *engine.Result
+	defer func() {
+		params := db.CreateJobRunParams{
+			JobID:        job.ID,
+			StartedAt:    startedAt,
+			EndedAt:      time.Now(),
+			Outcome:      runOutcome,
+			ErrorMessage: runErrMsg,
+		}
+		if runResult != nil {
+			params.FilesCopied = runResult.FilesCopied
+			params.FilesSkipped = runResult.FilesSkipped
+			params.FilesQuarantined = runResult.Quarantined
+			params.FilesErrored = len(runResult.Errors)
+			params.BytesReviewed = runResult.BytesReviewed
+			params.BytesCopied = runResult.BytesCopied
+		}
+		if _, err := s.db.CreateJobRun(context.Background(), params); err != nil {
+			log.Printf("jobs: persist job_run for job %d: %v", job.ID, err)
+		}
+	}()
+
 	defer cancel()
 	defer func() {
 		s.mu.Lock()
@@ -417,6 +453,7 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 	srcFS, dstFS, fsErr := s.openJobFS(ctx, job)
 	if fsErr != nil {
 		msg := fsErr.Error()
+		runErrMsg = &msg
 		_ = s.db.UpdateJobStatus(ctx, job.ID, "error", &msg, true)
 		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
 		return
@@ -433,6 +470,15 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		lastScanEventMu sync.Mutex
 		lastScanEvent   time.Time
 	)
+
+	// Seed the ETA tracker with the duration of the most recent successful run, if any.
+	// On the very first run this is zero and EstimateETA returns 0 until enough
+	// samples accumulate (the UI shows "Calculating…" during that window).
+	var priorDuration time.Duration
+	if last, err := s.db.LatestJobRun(ctx, job.ID); err == nil && last != nil {
+		priorDuration = last.EndedAt.Sub(last.StartedAt)
+	}
+	etaTrk := newETATracker(priorDuration)
 
 	result, runErr := s.engine.Run(ctx, engine.Config{
 		JobID:            job.ID,
@@ -476,28 +522,39 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 			})
 		},
 		OnProgress: func(p engine.Progress) {
-			eta := 0
-			if p.RateKBs > 0 && p.BytesDone > 0 && p.FilesTotal > p.FilesDone {
-				remaining := int64(p.FilesTotal-p.FilesDone) * (p.BytesDone / int64(p.FilesDone+1))
-				eta = int(float64(remaining) / 1024 / p.RateKBs)
+			etaTrk.Update(p.BytesReviewed)
+			// During the scanning phase we don't yet know BytesScanned's final value
+			// (it's still growing), so any ETA computed from "remaining" would be
+			// misleading. Let the UI render "Calculating…" instead.
+			etaSecs := 0
+			if p.Phase != engine.PhaseScanning && p.BytesScanned > 0 {
+				etaSecs = etaTrk.EstimateETA(p.BytesReviewed, p.BytesScanned)
 			}
 			s.hub.Broadcast(ws.Event{
-				JobID:        job.ID,
-				Event:        "progress",
-				FilesDone:    p.FilesDone,
-				FilesTotal:   p.FilesTotal,
-				FilesSkipped: p.FilesSkipped,
-				BytesDone:    p.BytesDone,
-				RateKBs:      p.RateKBs,
-				ETASecs:      eta,
-				CurrentFile:  p.CurrentFile,
-				FileAction:   p.FileAction,
+				JobID:         job.ID,
+				Event:         "progress",
+				Phase:         p.Phase,
+				FilesDone:     p.FilesDone,
+				FilesTotal:    p.FilesTotal,
+				FilesSkipped:  p.FilesSkipped,
+				FilesScanned:  p.FilesScanned,
+				BytesScanned:  p.BytesScanned,
+				BytesDone:     p.BytesDone,
+				BytesReviewed: p.BytesReviewed,
+				BytesCopied:   p.BytesCopied,
+				RateKBs:       p.RateKBs,
+				ETASecs:       etaSecs,
+				CurrentFile:   p.CurrentFile,
+				FileAction:    p.FileAction,
 			})
 		},
 	})
 
+	runResult = result
+
 	if runErr != nil {
 		msg := runErr.Error()
+		runErrMsg = &msg
 		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "error", &msg, true)
 		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
 		if s.auditSvc != nil {
@@ -507,6 +564,7 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 	}
 
 	if result.Paused {
+		runOutcome = "paused"
 		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "paused", nil, false)
 		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "paused"})
 		if s.auditSvc != nil {
@@ -517,6 +575,7 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 
 	if len(result.Errors) > 0 {
 		msg := fmt.Sprintf("%d file(s) failed: %v", len(result.Errors), result.Errors[0].Err)
+		runErrMsg = &msg
 		_ = s.db.UpdateJobStatus(context.Background(), job.ID, "error", &msg, true)
 		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
 		if s.auditSvc != nil {
@@ -525,6 +584,7 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		return
 	}
 
+	runOutcome = "completed"
 	total := result.FilesCopied + result.FilesSkipped
 	_ = s.db.UpdateJobStatus(context.Background(), job.ID, "idle", nil, true)
 	s.hub.Broadcast(ws.Event{

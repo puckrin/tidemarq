@@ -144,10 +144,16 @@ export interface HealthResponse {
 export interface WsEvent {
   job_id: number
   event: 'started' | 'progress' | 'paused' | 'completed' | 'error' | 'conflict_resolved'
+  /** "scanning" | "comparing" | "transferring" | "verifying" — engine's current activity. */
+  phase?: string
   files_done?: number
   files_total?: number
   files_skipped?: number
-  bytes_done?: number
+  files_scanned?: number
+  bytes_scanned?: number
+  bytes_done?: number       // alias of bytes_copied; kept for back-compat
+  bytes_reviewed?: number
+  bytes_copied?: number
   rate_kbs?: number
   eta_secs?: number
   current_file?: string

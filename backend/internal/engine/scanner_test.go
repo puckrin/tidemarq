@@ -16,7 +16,7 @@ func TestScanDir_ReturnsFiles(t *testing.T) {
 	writeFile(t, filepath.Join(root, "sub", "b.txt"), "world")
 	writeFile(t, filepath.Join(root, "sub", "deep", "c.txt"), "deep")
 
-	files, err := scanDir(context.Background(), root, 4)
+	files, err := scanDir(context.Background(), root, 4, nil)
 	if err != nil {
 		t.Fatalf("scanDir: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestScanDir_ReturnsFiles(t *testing.T) {
 
 func TestScanDir_EmptyDir(t *testing.T) {
 	root := t.TempDir()
-	files, err := scanDir(context.Background(), root, 4)
+	files, err := scanDir(context.Background(), root, 4, nil)
 	if err != nil {
 		t.Fatalf("scanDir: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestScanDir_SkipsDirectories(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(root, "file.txt"), "data")
 
-	files, err := scanDir(context.Background(), root, 4)
+	files, err := scanDir(context.Background(), root, 4, nil)
 	if err != nil {
 		t.Fatalf("scanDir: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestScanDir_FileMetadata(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "file.txt"), "content")
 
-	files, err := scanDir(context.Background(), root, 4)
+	files, err := scanDir(context.Background(), root, 4, nil)
 	if err != nil {
 		t.Fatalf("scanDir: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestScanDir_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before the scan starts
 
-	files, err := scanDir(ctx, root, 4)
+	files, err := scanDir(ctx, root, 4, nil)
 	if err == nil {
 		t.Fatal("expected an error from cancelled context, got nil")
 	}
