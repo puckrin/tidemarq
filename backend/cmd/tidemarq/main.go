@@ -113,6 +113,8 @@ func seedAdmin(database *db.DB, cfg *config.Config) error {
 		return err
 	}
 
-	_, err = database.CreateUser(context.Background(), cfg.Admin.Username, hash, "admin")
+	// Force the seeded admin to change its password on first login so the
+	// well-known default credential (admin/admin123) cannot remain in use.
+	_, err = database.CreateUser(context.Background(), cfg.Admin.Username, hash, "admin", true)
 	return err
 }

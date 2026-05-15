@@ -16,6 +16,12 @@ type Claims struct {
 	UserID   int64  `json:"user_id"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	// PasswordChangeRequired is set on the JWT for any account that must
+	// rotate its password before doing anything else. The middleware honours
+	// this by 403'ing every endpoint except POST /api/v1/auth/change-password.
+	// Issued tokens are short-lived, so once the password is changed the next
+	// token (issued by the change-password handler) will not carry the flag.
+	PasswordChangeRequired bool `json:"pwd_change_required,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -33,13 +39,16 @@ func NewService(secret string, ttl time.Duration) *Service {
 	}
 }
 
-// IssueToken mints a signed JWT for the given user.
-func (s *Service) IssueToken(userID int64, username, role string) (string, error) {
+// IssueToken mints a signed JWT for the given user. Set
+// passwordChangeRequired to true to force the holder to rotate their password
+// before any other endpoint will accept the token.
+func (s *Service) IssueToken(userID int64, username, role string, passwordChangeRequired bool) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		UserID:   userID,
-		Username: username,
-		Role:     role,
+		UserID:                 userID,
+		Username:               username,
+		Role:                   role,
+		PasswordChangeRequired: passwordChangeRequired,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.ttl)),

@@ -27,7 +27,7 @@ func TestHashAndCheckPassword(t *testing.T) {
 func TestIssueAndValidateToken(t *testing.T) {
 	svc := auth.NewService("test-secret", time.Hour)
 
-	token, err := svc.IssueToken(42, "alice", "admin")
+	token, err := svc.IssueToken(42, "alice", "admin", false)
 	if err != nil {
 		t.Fatalf("IssueToken: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestIssueAndValidateToken(t *testing.T) {
 func TestValidateToken_Tampered(t *testing.T) {
 	svc := auth.NewService("test-secret", time.Hour)
 
-	token, err := svc.IssueToken(1, "alice", "admin")
+	token, err := svc.IssueToken(1, "alice", "admin", false)
 	if err != nil {
 		t.Fatalf("IssueToken: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestValidateToken_WrongSecret(t *testing.T) {
 	svc1 := auth.NewService("secret-a", time.Hour)
 	svc2 := auth.NewService("secret-b", time.Hour)
 
-	token, err := svc1.IssueToken(1, "alice", "admin")
+	token, err := svc1.IssueToken(1, "alice", "admin", false)
 	if err != nil {
 		t.Fatalf("IssueToken: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestValidateToken_WrongSecret(t *testing.T) {
 func TestValidateToken_Expired(t *testing.T) {
 	svc := auth.NewService("test-secret", -time.Second) // already expired
 
-	token, err := svc.IssueToken(1, "alice", "admin")
+	token, err := svc.IssueToken(1, "alice", "admin", false)
 	if err != nil {
 		t.Fatalf("IssueToken: %v", err)
 	}

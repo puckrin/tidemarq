@@ -53,7 +53,7 @@ func newAuditTestServer(t *testing.T) (*httptest.Server, string, string, string)
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)
 	}
-	if _, err := database.CreateUser(context.Background(), "admin", hash, "admin"); err != nil {
+	if _, err := database.CreateUser(context.Background(), "admin", hash, "admin", false); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 

@@ -50,6 +50,15 @@ export const login = (username: string, password: string) =>
 export const getWsToken = () =>
   request<{ token: string }>(`${BASE}/auth/ws-token`)
 
+// Rotate the authenticated user's password. Returns a fresh JWT without the
+// password_change_required flag. Used both for the initial forced-change flow
+// and for any voluntary password rotation.
+export const changePassword = (currentPassword: string, newPassword: string) =>
+  request<{ token: string }>(`${BASE}/auth/change-password`, {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  })
+
 // Health
 export const getHealth = () => request<HealthResponse>('/health')
 

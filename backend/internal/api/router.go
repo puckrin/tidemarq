@@ -8,6 +8,26 @@ import (
 	"github.com/tidemarq/tidemarq/internal/auth"
 )
 
+// requirePasswordCurrent blocks every authenticated request except the
+// change-password endpoint when the user's JWT carries the
+// PasswordChangeRequired flag. Must be chained after authSvc.Middleware so
+// claims are present in the request context. Returns 403 with code
+// "password_change_required" — the frontend uses this code to know it should
+// render the forced-change view.
+func requirePasswordCurrent(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims := auth.ClaimsFromContext(r.Context())
+		if claims != nil && claims.PasswordChangeRequired &&
+			!(r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/change-password") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":"password change required","code":"password_change_required"}`)) //nolint:errcheck
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // securityHeaders sets defensive HTTP response headers on every response.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -43,83 +63,97 @@ func (s *Server) Routes() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.authSvc.Middleware)
 
-		// WS token issuance — any authenticated user.
-		r.Get("/api/v1/auth/ws-token", s.handleWSToken)
+		// Change-password is reachable as soon as the user is authenticated,
+		// even if the account is flagged as needing a password change. This
+		// is the one endpoint that can clear the flag, so it must sit outside
+		// the requirePasswordCurrent gate.
+		r.Post("/api/v1/auth/change-password", s.handleChangePassword)
 
-		// Admin-only: user management.
+		// All other authenticated endpoints sit inside this nested group and
+		// are blocked while the account is flagged. Chi requires Use() to be
+		// declared before any routes on the router it applies to, so the
+		// nested group exists purely to anchor that ordering.
 		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireRole("admin"))
+			r.Use(requirePasswordCurrent)
 
-			r.Get("/api/v1/users", s.handleListUsers)
-			r.Post("/api/v1/users", s.handleCreateUser)
-			r.Get("/api/v1/users/{id}", s.handleGetUser)
-			r.Put("/api/v1/users/{id}", s.handleUpdateUser)
-			r.Delete("/api/v1/users/{id}", s.handleDeleteUser)
-		})
+			// WS token issuance — any authenticated user.
+			r.Get("/api/v1/auth/ws-token", s.handleWSToken)
 
-		// Job management: read access for all authenticated users.
-		r.Get("/api/v1/jobs", s.handleListJobs)
-		r.Get("/api/v1/jobs/{id}", s.handleGetJob)
+			// Admin-only: user management.
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole("admin"))
 
-		// Job write access: admin and operator.
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireRole("admin", "operator"))
+				r.Get("/api/v1/users", s.handleListUsers)
+				r.Post("/api/v1/users", s.handleCreateUser)
+				r.Get("/api/v1/users/{id}", s.handleGetUser)
+				r.Put("/api/v1/users/{id}", s.handleUpdateUser)
+				r.Delete("/api/v1/users/{id}", s.handleDeleteUser)
+			})
 
-			r.Post("/api/v1/jobs", s.handleCreateJob)
-			r.Put("/api/v1/jobs/{id}", s.handleUpdateJob)
-			r.Delete("/api/v1/jobs/{id}", s.handleDeleteJob)
-			r.Post("/api/v1/jobs/{id}/run", s.handleRunJob)
-			r.Post("/api/v1/jobs/{id}/pause", s.handlePauseJob)
-			r.Post("/api/v1/jobs/{id}/resume", s.handleResumeJob)
-		})
+			// Job management: read access for all authenticated users.
+			r.Get("/api/v1/jobs", s.handleListJobs)
+			r.Get("/api/v1/jobs/{id}", s.handleGetJob)
 
-		// Conflicts: read for all authenticated; resolve/clear for admin/operator.
-		r.Get("/api/v1/conflicts", s.handleListConflicts)
-		r.Get("/api/v1/conflicts/{id}", s.handleGetConflict)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireRole("admin", "operator"))
-			r.Post("/api/v1/conflicts/{id}/resolve", s.handleResolveConflict)
-			r.Post("/api/v1/conflicts/clear-resolved", s.handleClearResolvedConflicts)
-		})
+			// Job write access: admin and operator.
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole("admin", "operator"))
 
-		// Versions and quarantine: read for all; restore/clear for admin/operator.
-		r.Get("/api/v1/versions", s.handleListVersions)
-		r.Get("/api/v1/quarantine", s.handleListQuarantine)
-		r.Get("/api/v1/quarantine/removed", s.handleListRemovedQuarantine)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireRole("admin", "operator"))
-			r.Post("/api/v1/versions/{id}/restore", s.handleRestoreVersion)
-			r.Post("/api/v1/quarantine/{id}/restore", s.handleRestoreQuarantine)
-			r.Delete("/api/v1/quarantine/{id}", s.handleDeleteQuarantine)
-			r.Post("/api/v1/quarantine/clear-removed", s.handleClearRemovedQuarantine)
-		})
+				r.Post("/api/v1/jobs", s.handleCreateJob)
+				r.Put("/api/v1/jobs/{id}", s.handleUpdateJob)
+				r.Delete("/api/v1/jobs/{id}", s.handleDeleteJob)
+				r.Post("/api/v1/jobs/{id}/run", s.handleRunJob)
+				r.Post("/api/v1/jobs/{id}/pause", s.handlePauseJob)
+				r.Post("/api/v1/jobs/{id}/resume", s.handleResumeJob)
+			})
 
-		// Mounts: admin/operator write, all authenticated read.
-		r.Get("/api/v1/mounts", s.handleListMounts)
-		r.Get("/api/v1/mounts/{id}", s.handleGetMount)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireRole("admin", "operator"))
-			r.Post("/api/v1/mounts", s.handleCreateMount)
-			r.Put("/api/v1/mounts/{id}", s.handleUpdateMount)
-			r.Delete("/api/v1/mounts/{id}", s.handleDeleteMount)
-			r.Post("/api/v1/mounts/{id}/test", s.handleTestMount)
-		})
+			// Conflicts: read for all authenticated; resolve/clear for admin/operator.
+			r.Get("/api/v1/conflicts", s.handleListConflicts)
+			r.Get("/api/v1/conflicts/{id}", s.handleGetConflict)
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole("admin", "operator"))
+				r.Post("/api/v1/conflicts/{id}/resolve", s.handleResolveConflict)
+				r.Post("/api/v1/conflicts/clear-resolved", s.handleClearResolvedConflicts)
+			})
 
-		// Settings: read by any authenticated user; write is admin only.
-		r.Get("/api/v1/settings", s.handleGetSettings)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireRole("admin"))
-			r.Put("/api/v1/settings", s.handleUpdateSettings)
-		})
+			// Versions and quarantine: read for all; restore/clear for admin/operator.
+			r.Get("/api/v1/versions", s.handleListVersions)
+			r.Get("/api/v1/quarantine", s.handleListQuarantine)
+			r.Get("/api/v1/quarantine/removed", s.handleListRemovedQuarantine)
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole("admin", "operator"))
+				r.Post("/api/v1/versions/{id}/restore", s.handleRestoreVersion)
+				r.Post("/api/v1/quarantine/{id}/restore", s.handleRestoreQuarantine)
+				r.Delete("/api/v1/quarantine/{id}", s.handleDeleteQuarantine)
+				r.Post("/api/v1/quarantine/clear-removed", s.handleClearRemovedQuarantine)
+			})
 
-		// Directory browser: all authenticated users can browse.
-		r.Get("/api/v1/browse", s.handleBrowse)
+			// Mounts: admin/operator write, all authenticated read.
+			r.Get("/api/v1/mounts", s.handleListMounts)
+			r.Get("/api/v1/mounts/{id}", s.handleGetMount)
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole("admin", "operator"))
+				r.Post("/api/v1/mounts", s.handleCreateMount)
+				r.Put("/api/v1/mounts/{id}", s.handleUpdateMount)
+				r.Delete("/api/v1/mounts/{id}", s.handleDeleteMount)
+				r.Post("/api/v1/mounts/{id}/test", s.handleTestMount)
+			})
 
-		// Audit log: all authenticated can read; export is admin only.
-		r.Get("/api/v1/audit", s.handleListAuditLog)
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireRole("admin"))
-			r.Get("/api/v1/audit/export", s.handleExportAuditLog)
+			// Settings: read by any authenticated user; write is admin only.
+			r.Get("/api/v1/settings", s.handleGetSettings)
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole("admin"))
+				r.Put("/api/v1/settings", s.handleUpdateSettings)
+			})
+
+			// Directory browser: all authenticated users can browse.
+			r.Get("/api/v1/browse", s.handleBrowse)
+
+			// Audit log: all authenticated can read; export is admin only.
+			r.Get("/api/v1/audit", s.handleListAuditLog)
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole("admin"))
+				r.Get("/api/v1/audit/export", s.handleExportAuditLog)
+			})
 		})
 	})
 

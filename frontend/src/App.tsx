@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 import { listConflicts, listQuarantine } from './api/client'
 
 import { LoginView }     from './views/LoginView'
+import { ChangePasswordView } from './views/ChangePasswordView'
 import { DashboardView } from './views/DashboardView'
 import { JobsView }      from './views/JobsView'
 import { JobDetailView } from './views/JobDetailView'
@@ -34,11 +35,15 @@ function Shell() {
 
   useEffect(() => { setAuthed(!!user) }, [user])
 
+  // Hold off on the background polling queries while the user is on the
+  // forced-change screen. They'd just 403 with password_change_required.
+  const queriesEnabled = authed && !user?.passwordChangeRequired
+
   const { data: conflicts = [] } = useQuery({
     queryKey: ['conflicts'],
     queryFn: () => listConflicts(),
     refetchInterval: 30000,
-    enabled: authed,
+    enabled: queriesEnabled,
   })
 
   const pendingConflicts = conflicts.filter(c => c.status === 'pending').length
@@ -47,7 +52,7 @@ function Shell() {
     queryKey: ['quarantine'],
     queryFn: () => listQuarantine(),
     refetchInterval: 60000,
-    enabled: authed,
+    enabled: queriesEnabled,
   })
   const quarantineCount = quarantine.length
 
@@ -58,6 +63,14 @@ function Shell() {
 
   if (!authed) {
     return <LoginView onLogin={() => setAuthed(true)} />
+  }
+
+  // The seeded default-admin account (or anything else the backend has
+  // flagged) must rotate its password before any other view is reachable.
+  // Once the user submits a valid new password, AuthProvider issues a new
+  // token without the flag and this branch falls through to the shell.
+  if (user?.passwordChangeRequired) {
+    return <ChangePasswordView />
   }
 
   return (

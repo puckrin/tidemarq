@@ -16,12 +16,13 @@ var ErrConflict = errors.New("conflict")
 
 // User represents a row in the users table.
 type User struct {
-	ID           int64     `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"-"`
-	Role         string    `json:"role"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                     int64     `json:"id"`
+	Username               string    `json:"username"`
+	PasswordHash           string    `json:"-"`
+	Role                   string    `json:"role"`
+	PasswordChangeRequired bool      `json:"password_change_required"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 // UserCount returns the total number of users.
@@ -31,11 +32,14 @@ func (db *DB) UserCount(ctx context.Context) (int, error) {
 	return n, err
 }
 
-// CreateUser inserts a new user and returns the created record.
-func (db *DB) CreateUser(ctx context.Context, username, passwordHash, role string) (*User, error) {
+// CreateUser inserts a new user and returns the created record. Set
+// passwordChangeRequired to true when seeding the default admin so the account
+// cannot be used for anything other than changing its own password until it
+// does so.
+func (db *DB) CreateUser(ctx context.Context, username, passwordHash, role string, passwordChangeRequired bool) (*User, error) {
 	res, err := db.ExecContext(ctx,
-		`INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)`,
-		username, passwordHash, role,
+		`INSERT INTO users (username, password_hash, role, password_change_required) VALUES (?, ?, ?, ?)`,
+		username, passwordHash, role, passwordChangeRequired,
 	)
 	if err != nil {
 		if isUniqueConstraintError(err) {
@@ -53,21 +57,21 @@ func (db *DB) CreateUser(ctx context.Context, username, passwordHash, role strin
 // GetUserByID retrieves a user by primary key.
 func (db *DB) GetUserByID(ctx context.Context, id int64) (*User, error) {
 	return db.scanUser(db.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, role, created_at, updated_at FROM users WHERE id = ?`, id,
+		`SELECT id, username, password_hash, role, password_change_required, created_at, updated_at FROM users WHERE id = ?`, id,
 	))
 }
 
 // GetUserByUsername retrieves a user by username.
 func (db *DB) GetUserByUsername(ctx context.Context, username string) (*User, error) {
 	return db.scanUser(db.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, role, created_at, updated_at FROM users WHERE username = ?`, username,
+		`SELECT id, username, password_hash, role, password_change_required, created_at, updated_at FROM users WHERE username = ?`, username,
 	))
 }
 
 // ListUsers returns all users ordered by username.
 func (db *DB) ListUsers(ctx context.Context) ([]*User, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, username, password_hash, role, created_at, updated_at FROM users ORDER BY username`,
+		`SELECT id, username, password_hash, role, password_change_required, created_at, updated_at FROM users ORDER BY username`,
 	)
 	if err != nil {
 		return nil, err
@@ -77,7 +81,7 @@ func (db *DB) ListUsers(ctx context.Context) ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		u := &User{}
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.PasswordChangeRequired, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -122,6 +126,26 @@ func (db *DB) UpdateUser(ctx context.Context, id int64, p UpdateUserParams) (*Us
 	return db.GetUserByID(ctx, id)
 }
 
+// ClearPasswordChangeRequired marks the user's password as no longer needing a
+// forced change. Called by the change-password handler after a successful
+// password rotation.
+func (db *DB) ClearPasswordChangeRequired(ctx context.Context, id int64) error {
+	res, err := db.ExecContext(ctx,
+		`UPDATE users SET password_change_required = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeleteUser removes a user by ID.
 func (db *DB) DeleteUser(ctx context.Context, id int64) error {
 	res, err := db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
@@ -140,7 +164,7 @@ func (db *DB) DeleteUser(ctx context.Context, id int64) error {
 
 func (db *DB) scanUser(row *sql.Row) (*User, error) {
 	u := &User{}
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &u.UpdatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.PasswordChangeRequired, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

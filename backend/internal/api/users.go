@@ -64,7 +64,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.db.CreateUser(r.Context(), req.Username, hash, req.Role)
+	user, err := s.db.CreateUser(r.Context(), req.Username, hash, req.Role, false)
 	if err != nil {
 		if err == db.ErrConflict {
 			writeError(w, http.StatusConflict, "username already exists", "conflict")
