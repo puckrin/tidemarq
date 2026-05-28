@@ -24,13 +24,23 @@ interface AuthContext {
 
 const Ctx = createContext<AuthContext | null>(null)
 
-function parseToken(token: string): AuthUser | null {
+// parseToken decodes the JWT payload and validates the exp claim so an
+// expired token is treated as no token at all. Without the exp check, a
+// stale token in localStorage causes the app shell to render for one
+// frame before the first 401 boots the user to /login — the "flash of
+// authenticated UI" bug. parseToken does not (and cannot) verify the
+// signature; the server is still authoritative on every request.
+export function parseToken(token: string): AuthUser | null {
   try {
     const payload = JSON.parse(atob(token.split('.')[1] ?? '')) as {
       user_id: number
       username: string
       role: string
       pwd_change_required?: boolean
+      exp?: number
+    }
+    if (typeof payload.exp !== 'number' || payload.exp * 1000 <= Date.now()) {
+      return null
     }
     return {
       id: payload.user_id,
@@ -44,7 +54,14 @@ function parseToken(token: string): AuthUser | null {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'))
+  const [token, setToken] = useState<string | null>(() => {
+    const t = localStorage.getItem('token')
+    if (t && parseToken(t)) return t
+    // Evict expired or malformed tokens so the request() helper does not
+    // send them as Bearer credentials on the next API call.
+    if (t) localStorage.removeItem('token')
+    return null
+  })
   const [user, setUser] = useState<AuthUser | null>(() => {
     const t = localStorage.getItem('token')
     return t ? parseToken(t) : null
