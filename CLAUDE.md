@@ -197,7 +197,9 @@ The following describes the current implemented state of the application. Use th
 - Filesystem watch triggers via `fsnotify` with a 3-second debounce quiet period
 - Jobs can be paused mid-transfer via API; the engine checks for pause signals between file transfers and mid-file at chunk boundaries
 - Paused or cancelled jobs resume from a safe checkpoint on next trigger
-- WebSocket at `/ws` streams live progress events: files transferred, bytes, rate, ETA, current file
+- WebSocket at `/ws` streams live progress events: current phase (`scanning`/`comparing`/`transferring`/`verifying`), files scanned/transferred, bytes reviewed and bytes copied (tracked separately so no-change runs don't look like full transfers), rate, ETA, current file
+- ETA uses a 30-second rolling-window throughput tracker (`internal/jobs/eta.go`), seeded from the previous successful run's duration so the first progress event has a sensible estimate; the UI shows "Calculating…" until enough samples accumulate
+- Per-run history persisted to the `job_runs` table — outcome, file/byte counts, started/ended timestamps — powering ETA priors and a future run-history view
 - WebSocket connections authenticated via a short-lived token from `/api/v1/auth/ws-token`
 - Job states: `idle`, `running`, `paused`, `error`, `disabled`; transitions are mutex-protected in the jobs package
 - All scheduled jobs re-register their triggers automatically after a container restart
