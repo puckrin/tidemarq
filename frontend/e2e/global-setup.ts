@@ -19,7 +19,11 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
-const BACKEND_URL = process.env.TIDEMARQ_URL ?? 'https://localhost:8443'
+// In dev (Vite at :5173 proxying to the backend) the browser baseURL and the
+// backend URL are different, so we read them from separate env vars and only
+// fall back to TIDEMARQ_URL when running against a built frontend (CI), where
+// the backend serves the dist and both are the same.
+const BACKEND_URL = process.env.TIDEMARQ_BACKEND_URL ?? process.env.TIDEMARQ_URL ?? 'https://localhost:8443'
 const ADMIN_USER  = process.env.TIDEMARQ_ADMIN_USER     ?? 'admin'
 // Seeded default; only used to bootstrap a fresh backend whose admin still
 // has password_change_required=true. After the first run this password no
