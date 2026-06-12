@@ -26,7 +26,7 @@ describe('FilterEditor', () => {
     const { onChange } = renderWith()
     fireEvent.click(screen.getByText(/Add rule/i))
     expect(onChange).toHaveBeenCalledTimes(1)
-    const next = onChange.mock.calls[0][0]
+    const next = onChange.mock.calls[0]![0]
     expect(next.rules).toHaveLength(1)
     expect(next.rules[0].type).toBe('glob')
     expect(next.rules[0].action).toBe('exclude')
@@ -58,7 +58,7 @@ describe('FilterEditor', () => {
     const { onChange } = renderWith(ruleset)
     fireEvent.change(screen.getByLabelText('Rule type'), { target: { value: 'size' } })
     expect(onChange).toHaveBeenCalledTimes(1)
-    const next = onChange.mock.calls[0][0]
+    const next = onChange.mock.calls[0]![0]
     expect(next.rules[0]).toEqual({ type: 'size', action: 'exclude' })
     expect(next.rules[0].pattern).toBeUndefined()
   })
@@ -73,9 +73,9 @@ describe('FilterEditor', () => {
     }
     const { onChange } = renderWith(ruleset)
     const removeButtons = screen.getAllByLabelText('Remove rule')
-    fireEvent.click(removeButtons[0])
+    fireEvent.click(removeButtons[0]!)
     expect(onChange).toHaveBeenCalledTimes(1)
-    const next = onChange.mock.calls[0][0]
+    const next = onChange.mock.calls[0]![0]
     expect(next.rules).toHaveLength(1)
     expect(next.rules[0].pattern).toBe('b')
   })
@@ -102,7 +102,7 @@ describe('FilterEditor', () => {
     }
     const { onChange } = renderWith(ruleset)
     fireEvent.change(screen.getByLabelText('Size above (bytes)'), { target: { value: '' } })
-    const next = onChange.mock.calls[0][0]
+    const next = onChange.mock.calls[0]![0]
     expect(next.rules[0].size_above_bytes).toBeUndefined()
   })
 })

@@ -37,10 +37,14 @@ test.describe('Job management', () => {
     // Step 3: mode — default is one-way-backup (mode card already selected), just advance
     await page.getByRole('button', { name: /next/i }).click()
 
-    // Step 4: schedule & transfer (leave defaults)
+    // Step 4: filters (leave empty — no rules, no hidden-file exclusion)
+    await expect(page.getByText(/Step 4.*File Filters/i)).toBeVisible()
     await page.getByRole('button', { name: /next/i }).click()
 
-    // Step 5: review — job name should appear in the summary
+    // Step 5: schedule & transfer (leave defaults)
+    await page.getByRole('button', { name: /next/i }).click()
+
+    // Step 6: review — job name should appear in the summary
     await expect(page.getByText('E2E - Simple Backup')).toBeVisible()
     await page.getByRole('button', { name: /create job/i }).click()
 
