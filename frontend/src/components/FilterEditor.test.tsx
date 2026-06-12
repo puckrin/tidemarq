@@ -5,7 +5,10 @@ import type { FilterRuleset } from '../api/types'
 const empty: FilterRuleset = { exclude_hidden: false, rules: [] }
 
 function renderWith(value: FilterRuleset = empty) {
-  const onChange = vi.fn()
+  // Typing the mock so its calls[] entries are FilterRuleset, not `any` —
+  // otherwise every `mock.calls[0]![0]` access trips eslint's
+  // no-unsafe-assignment rule.
+  const onChange = vi.fn<(v: FilterRuleset) => void>()
   const utils = render(<FilterEditor value={value} onChange={onChange} />)
   return { ...utils, onChange }
 }
@@ -26,10 +29,10 @@ describe('FilterEditor', () => {
     const { onChange } = renderWith()
     fireEvent.click(screen.getByText(/Add rule/i))
     expect(onChange).toHaveBeenCalledTimes(1)
-    const next = onChange.mock.calls[0]![0]
+    const next = onChange.mock.calls[0]![0]!
     expect(next.rules).toHaveLength(1)
-    expect(next.rules[0].type).toBe('glob')
-    expect(next.rules[0].action).toBe('exclude')
+    expect(next.rules[0]!.type).toBe('glob')
+    expect(next.rules[0]!.action).toBe('exclude')
   })
 
   it('renders the right fields per rule type', () => {
@@ -58,9 +61,9 @@ describe('FilterEditor', () => {
     const { onChange } = renderWith(ruleset)
     fireEvent.change(screen.getByLabelText('Rule type'), { target: { value: 'size' } })
     expect(onChange).toHaveBeenCalledTimes(1)
-    const next = onChange.mock.calls[0]![0]
+    const next = onChange.mock.calls[0]![0]!
     expect(next.rules[0]).toEqual({ type: 'size', action: 'exclude' })
-    expect(next.rules[0].pattern).toBeUndefined()
+    expect(next.rules[0]!.pattern).toBeUndefined()
   })
 
   it('Remove drops the rule from the list', () => {
@@ -75,9 +78,9 @@ describe('FilterEditor', () => {
     const removeButtons = screen.getAllByLabelText('Remove rule')
     fireEvent.click(removeButtons[0]!)
     expect(onChange).toHaveBeenCalledTimes(1)
-    const next = onChange.mock.calls[0]![0]
+    const next = onChange.mock.calls[0]![0]!
     expect(next.rules).toHaveLength(1)
-    expect(next.rules[0].pattern).toBe('b')
+    expect(next.rules[0]!.pattern).toBe('b')
   })
 
   it('editing a field emits onChange with the patched rule', () => {
@@ -102,7 +105,7 @@ describe('FilterEditor', () => {
     }
     const { onChange } = renderWith(ruleset)
     fireEvent.change(screen.getByLabelText('Size above (bytes)'), { target: { value: '' } })
-    const next = onChange.mock.calls[0]![0]
-    expect(next.rules[0].size_above_bytes).toBeUndefined()
+    const next = onChange.mock.calls[0]![0]!
+    expect(next.rules[0]!.size_above_bytes).toBeUndefined()
   })
 })
