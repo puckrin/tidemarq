@@ -29,7 +29,11 @@ type Job struct {
 	// FiltersJSON is the JSON-encoded filter.Ruleset for this job. The DB
 	// layer stores it opaquely; internal/filter owns parsing and validation.
 	// Default "{}" preserves pre-feature behaviour (no filtering).
-	FiltersJSON      string     `json:"filters_json"`
+	//
+	// Hidden from JSON output (`json:"-"`) because callers consume the API
+	// via a response wrapper that exposes a parsed `filters` object rather
+	// than the raw blob.
+	FiltersJSON      string     `json:"-"`
 	LastRunAt        *time.Time `json:"last_run_at,omitempty"`
 	LastError        *string    `json:"last_error,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`

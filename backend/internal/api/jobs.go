@@ -3,9 +3,11 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/tidemarq/tidemarq/internal/db"
+	"github.com/tidemarq/tidemarq/internal/filter"
 	"github.com/tidemarq/tidemarq/internal/jobs"
 )
 
@@ -27,6 +29,62 @@ type jobRequest struct {
 	UseDelta       bool   `json:"use_delta"`
 	DeltaBlockSize int64  `json:"delta_block_size,omitempty"`
 	DeltaMinBytes  int64  `json:"delta_min_bytes,omitempty"`
+	// Filters is the §3.3 file-filtering ruleset. Omit or set to null for
+	// no filtering. The service validates the ruleset before persisting it
+	// and returns 400 on any validation failure.
+	//
+	// Update semantics: omitting filters in an Update request CLEARS the
+	// existing ruleset (matches how every other field on this endpoint
+	// works — the request body is the full intended state, not a patch).
+	Filters *filter.Ruleset `json:"filters,omitempty"`
+}
+
+// jobResponse mirrors db.Job for the API surface but exposes the persisted
+// ruleset as a parsed object rather than the raw filters_json blob.
+type jobResponse struct {
+	*db.Job
+	Filters *filter.Ruleset `json:"filters,omitempty"`
+}
+
+func toJobResponse(j *db.Job) jobResponse {
+	rs, err := decodeFiltersField(j.FiltersJSON)
+	if err != nil {
+		// Persisted JSON failed validation — log it and return the job
+		// without filters so the rest of the response still arrives. The
+		// frontend will see no rules; the operator can reset them via Update.
+		log.Printf("api: job %d has invalid filters_json (%v); returning without filters", j.ID, err)
+	}
+	return jobResponse{Job: j, Filters: rs}
+}
+
+func toJobResponses(jobs []*db.Job) []jobResponse {
+	out := make([]jobResponse, len(jobs))
+	for i, j := range jobs {
+		out[i] = toJobResponse(j)
+	}
+	return out
+}
+
+// decodeFiltersField parses a persisted filters_json blob into a ruleset for
+// the API response. "{}" and "" collapse to nil — the same sentinel the
+// engine treats as "no filtering". Validation runs because the persisted
+// value MAY have come from a hand-edit; we don't want to round-trip a
+// malformed ruleset out to the client.
+func decodeFiltersField(s string) (*filter.Ruleset, error) {
+	if s == "" || s == "{}" {
+		return nil, nil
+	}
+	var rs filter.Ruleset
+	if err := json.Unmarshal([]byte(s), &rs); err != nil {
+		return nil, err
+	}
+	if err := rs.Validate(); err != nil {
+		return nil, err
+	}
+	if !rs.ExcludeHidden && len(rs.Rules) == 0 {
+		return nil, nil
+	}
+	return &rs, nil
 }
 
 func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +96,7 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []*db.Job{}
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, toJobResponses(list))
 }
 
 func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +122,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		UseDelta:       req.UseDelta,
 		DeltaBlockSize: req.DeltaBlockSize,
 		DeltaMinBytes:  req.DeltaMinBytes,
+		Filters:        req.Filters,
 	})
 	if err != nil {
 		if errors.Is(err, jobs.ErrNameConflict) {
@@ -74,7 +133,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, job)
+	writeJSON(w, http.StatusCreated, toJobResponse(job))
 }
 
 func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +153,7 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, job)
+	writeJSON(w, http.StatusOK, toJobResponse(job))
 }
 
 func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +185,7 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		UseDelta:       req.UseDelta,
 		DeltaBlockSize: req.DeltaBlockSize,
 		DeltaMinBytes:  req.DeltaMinBytes,
+		Filters:        req.Filters,
 	})
 	if err != nil {
 		if errors.Is(err, jobs.ErrNotFound) {
@@ -140,7 +200,7 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, job)
+	writeJSON(w, http.StatusOK, toJobResponse(job))
 }
 
 func (s *Server) handleDeleteJob(w http.ResponseWriter, r *http.Request) {

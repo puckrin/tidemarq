@@ -535,6 +535,128 @@ func TestJobAPI_InvalidMode(t *testing.T) {
 }
 
 // -------------------------------------------------------------------------
+// File filtering (§3.3) via HTTP API
+// -------------------------------------------------------------------------
+
+// TestJobAPI_Filters_CreateAndRetrieve exercises the milestone-3 surface:
+// the request body's `filters` object survives Create → Get → List with the
+// rules byte-equivalent. The response uses a parsed object, NOT the
+// filters_json blob (which is hidden from the wire).
+func TestJobAPI_Filters_CreateAndRetrieve(t *testing.T) {
+	ts, token, src, dst := newFullTestServer(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"name": "filtered", "source_path": src, "destination_path": dst,
+		"mode": "one-way-backup",
+		"filters": map[string]any{
+			"exclude_hidden": true,
+			"rules": []map[string]any{
+				{"type": "glob", "action": "exclude", "pattern": "**/*.log"},
+				{"type": "size", "action": "exclude", "size_above_bytes": 4294967296},
+			},
+		},
+	})
+	resp := doRequest(t, ts, http.MethodPost, "/api/v1/jobs", &token, bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d", resp.StatusCode)
+	}
+	var created map[string]any
+	json.NewDecoder(resp.Body).Decode(&created) //nolint:errcheck
+
+	// filters_json must not appear on the wire — clients consume the parsed
+	// `filters` object instead.
+	if _, ok := created["filters_json"]; ok {
+		t.Error("response leaked filters_json")
+	}
+	gotFilters, ok := created["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("response missing filters object: %+v", created)
+	}
+	if gotFilters["exclude_hidden"] != true {
+		t.Errorf("exclude_hidden: got %v, want true", gotFilters["exclude_hidden"])
+	}
+	rules, _ := gotFilters["rules"].([]any)
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 rules in response, got %d", len(rules))
+	}
+
+	// Get returns the same shape.
+	jobID := idStr(created["id"].(float64))
+	getResp := doRequest(t, ts, http.MethodGet, "/api/v1/jobs/"+jobID, &token, nil)
+	defer getResp.Body.Close()
+	var got map[string]any
+	json.NewDecoder(getResp.Body).Decode(&got) //nolint:errcheck
+	gotF, _ := got["filters"].(map[string]any)
+	if gotF["exclude_hidden"] != true {
+		t.Error("Get: exclude_hidden mismatched")
+	}
+}
+
+// TestJobAPI_Filters_InvalidRuleReturns400 confirms the validation hook at
+// the Service layer surfaces all the way out as a 400 — a malformed rule
+// must never reach the database.
+func TestJobAPI_Filters_InvalidRuleReturns400(t *testing.T) {
+	ts, token, src, dst := newFullTestServer(t)
+
+	// A modified-date rule with no fields is structurally invalid.
+	body, _ := json.Marshal(map[string]any{
+		"name": "bad-filter", "source_path": src, "destination_path": dst,
+		"mode": "one-way-backup",
+		"filters": map[string]any{
+			"rules": []map[string]any{
+				{"type": "modified", "action": "exclude"},
+			},
+		},
+	})
+	resp := doRequest(t, ts, http.MethodPost, "/api/v1/jobs", &token, bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid filter, got %d", resp.StatusCode)
+	}
+}
+
+// TestJobAPI_Filters_OmittedFromUpdateClears verifies the documented Update
+// semantics: omitting `filters` in an Update request CLEARS the existing
+// ruleset. This matches every other field on the endpoint (the body is the
+// full intended state, not a patch).
+func TestJobAPI_Filters_OmittedFromUpdateClears(t *testing.T) {
+	ts, token, src, dst := newFullTestServer(t)
+
+	create, _ := json.Marshal(map[string]any{
+		"name": "to-clear", "source_path": src, "destination_path": dst,
+		"mode": "one-way-backup",
+		"filters": map[string]any{
+			"rules": []map[string]any{{"type": "glob", "action": "exclude", "pattern": "*.log"}},
+		},
+	})
+	cResp := doRequest(t, ts, http.MethodPost, "/api/v1/jobs", &token, bytes.NewReader(create))
+	defer cResp.Body.Close()
+	var created map[string]any
+	json.NewDecoder(cResp.Body).Decode(&created) //nolint:errcheck
+	jobID := idStr(created["id"].(float64))
+	if _, ok := created["filters"]; !ok {
+		t.Fatal("setup failed: created job did not return filters")
+	}
+
+	update, _ := json.Marshal(map[string]any{
+		"name": "to-clear", "source_path": src, "destination_path": dst,
+		"mode": "one-way-backup",
+		// filters omitted on purpose
+	})
+	uResp := doRequest(t, ts, http.MethodPut, "/api/v1/jobs/"+jobID, &token, bytes.NewReader(update))
+	defer uResp.Body.Close()
+	if uResp.StatusCode != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d", uResp.StatusCode)
+	}
+	var updated map[string]any
+	json.NewDecoder(uResp.Body).Decode(&updated) //nolint:errcheck
+	if _, ok := updated["filters"]; ok {
+		t.Errorf("filters should be absent (omitempty) after Update with no filters, got %+v", updated["filters"])
+	}
+}
+
+// -------------------------------------------------------------------------
 // Run / Pause / Resume via HTTP API
 // -------------------------------------------------------------------------
 
