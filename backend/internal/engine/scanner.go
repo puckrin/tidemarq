@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tidemarq/tidemarq/internal/filter"
 	"github.com/tidemarq/tidemarq/internal/mountfs"
 )
 
@@ -26,7 +27,10 @@ const defaultWorkers = 8
 // Subdirectory enumeration is parallelised across a bounded goroutine pool.
 // onScan is invoked periodically with the running count of files and bytes
 // discovered so far; it is throttled internally and may be nil.
-func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int, onScan func(int, int64)) ([]FileInfo, error) {
+// When filters is non-nil, files the ruleset excludes are silently dropped
+// before being added to the result; excluded files do not count toward the
+// onScan totals (so the UI shows only what the engine will actually consider).
+func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int, filters *filter.Ruleset, onScan func(int, int64)) ([]FileInfo, error) {
 	if workers <= 0 {
 		workers = defaultWorkers
 	}
@@ -68,6 +72,9 @@ func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int, onScan func(i
 				case w, ok := <-workCh:
 					if !ok {
 						return
+					}
+					if filters != nil && filters.Decide(w.relPath, w.info.Size, w.info.ModTime) == filter.Exclude {
+						continue
 					}
 					mu.Lock()
 					results = append(results, FileInfo{
@@ -149,9 +156,12 @@ func scanFS(ctx context.Context, mfs mountfs.MountFS, workers int, onScan func(i
 // single-threaded WalkDir traversal itself — a goroutine pool adds overhead
 // without benefit here. The workers parameter is accepted but unused; it
 // remains for API compatibility with callers that pass cfg.Workers.
+// When filters is non-nil, files the ruleset excludes are silently dropped
+// before being added to the result; excluded files do not count toward the
+// onScan totals.
 // onScan is invoked periodically with the running count of files and bytes
 // discovered so far; it is throttled internally and may be nil.
-func scanDir(ctx context.Context, root string, _ int, onScan func(int, int64)) ([]FileInfo, error) {
+func scanDir(ctx context.Context, root string, _ int, filters *filter.Ruleset, onScan func(int, int64)) ([]FileInfo, error) {
 	var (
 		results   []FileInfo
 		bytesSeen int64
@@ -181,8 +191,12 @@ func scanDir(ctx context.Context, root string, _ int, onScan func(int, int64)) (
 		if err != nil {
 			return err
 		}
+		rel := filepath.ToSlash(relPath)
+		if filters != nil && filters.Decide(rel, info.Size(), info.ModTime()) == filter.Exclude {
+			return nil
+		}
 		results = append(results, FileInfo{
-			RelPath:     filepath.ToSlash(relPath),
+			RelPath:     rel,
 			AbsPath:     path,
 			Size:        info.Size(),
 			ModTime:     info.ModTime(),

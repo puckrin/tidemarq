@@ -51,7 +51,7 @@ func BenchmarkScanDir_10k(b *testing.B) {
 		b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				files, err := scanDir(context.Background(), root, workers, nil)
+				files, err := scanDir(context.Background(), root, workers, nil, nil)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -70,7 +70,7 @@ func BenchmarkScanDir_Serial(b *testing.B) {
 	buildSyntheticTree(b, root, 500, 20)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := scanDir(context.Background(), root, 1, nil); err != nil {
+		if _, err := scanDir(context.Background(), root, 1, nil, nil); err != nil {
 			b.Fatal(err)
 		}
 	}

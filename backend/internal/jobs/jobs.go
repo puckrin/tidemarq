@@ -17,6 +17,7 @@ import (
 	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/db"
 	"github.com/tidemarq/tidemarq/internal/engine"
+	"github.com/tidemarq/tidemarq/internal/filter"
 	"github.com/tidemarq/tidemarq/internal/hasher"
 	"github.com/tidemarq/tidemarq/internal/mountfs"
 	"github.com/tidemarq/tidemarq/internal/mounts"
@@ -52,6 +53,9 @@ type CreateParams struct {
 	UseDelta       bool
 	DeltaBlockSize int64
 	DeltaMinBytes  int64
+	// Filters is the §3.3 ruleset for this job. nil means no filtering.
+	// The service validates the ruleset before persisting it.
+	Filters *filter.Ruleset
 }
 
 // UpdateParams holds the fields that may be updated on a job.
@@ -72,6 +76,8 @@ type UpdateParams struct {
 	UseDelta       bool
 	DeltaBlockSize int64
 	DeltaMinBytes  int64
+	// Filters is the §3.3 ruleset for this job. nil means no filtering.
+	Filters *filter.Ruleset
 }
 
 // runContext tracks an in-progress job run.
@@ -207,6 +213,10 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*db.Job, error) {
 	if _, err := hasher.New(p.HashAlgo); err != nil {
 		return nil, fmt.Errorf("invalid hash_algo %q: must be \"sha256\" or \"blake3\"", p.HashAlgo)
 	}
+	filtersJSON, err := encodeFilters(p.Filters)
+	if err != nil {
+		return nil, err
+	}
 	j, err := s.db.CreateJob(ctx, db.CreateJobParams{
 		Name:             p.Name,
 		SourcePath:       p.SourcePath,
@@ -223,6 +233,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (*db.Job, error) {
 		UseDelta:         p.UseDelta,
 		DeltaBlockSize:   p.DeltaBlockSize,
 		DeltaMinBytes:    p.DeltaMinBytes,
+		FiltersJSON:      filtersJSON,
 	})
 	if err != nil {
 		return nil, err
@@ -287,6 +298,10 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (*db.Job
 	if _, err := hasher.New(p.HashAlgo); err != nil {
 		return nil, fmt.Errorf("invalid hash_algo %q: must be \"sha256\" or \"blake3\"", p.HashAlgo)
 	}
+	filtersJSON, err := encodeFilters(p.Filters)
+	if err != nil {
+		return nil, err
+	}
 
 	j, err := s.db.UpdateJob(ctx, id, db.UpdateJobParams{
 		Name:             p.Name,
@@ -304,6 +319,7 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (*db.Job
 		UseDelta:         p.UseDelta,
 		DeltaBlockSize:   p.DeltaBlockSize,
 		DeltaMinBytes:    p.DeltaMinBytes,
+		FiltersJSON:      filtersJSON,
 	})
 	if errors.Is(err, db.ErrNotFound) {
 		return nil, ErrNotFound
@@ -480,6 +496,18 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 	}
 	etaTrk := newETATracker(priorDuration)
 
+	// Parse the persisted filter ruleset. The API validates rules at create
+	// and update time, so a parse failure here indicates DB corruption or a
+	// manual edit — refuse to run rather than silently sync the wrong files.
+	filters, err := parseFilters(job.FiltersJSON)
+	if err != nil {
+		msg := fmt.Sprintf("filter ruleset: %v", err)
+		runErrMsg = &msg
+		_ = s.db.UpdateJobStatus(ctx, job.ID, "error", &msg, true)
+		s.hub.Broadcast(ws.Event{JobID: job.ID, Event: "error", Message: msg})
+		return
+	}
+
 	result, runErr := s.engine.Run(ctx, engine.Config{
 		JobID:            job.ID,
 		Mode:             job.Mode,
@@ -494,6 +522,7 @@ func (s *Service) execRun(ctx context.Context, job *db.Job, pauseCh chan struct{
 		UseDelta:         job.UseDelta,
 		DeltaBlockSize:   int(job.DeltaBlockSize),
 		DeltaMinBytes:    job.DeltaMinBytes,
+		Filters:          filters,
 		PauseCh:          pauseCh,
 		VersionsSvc:      s.versionsSvc,
 		ConflictsSvc:     s.conflictsSvc,

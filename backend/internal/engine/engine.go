@@ -15,6 +15,7 @@ import (
 
 	"github.com/tidemarq/tidemarq/internal/conflicts"
 	"github.com/tidemarq/tidemarq/internal/delta"
+	"github.com/tidemarq/tidemarq/internal/filter"
 	"github.com/tidemarq/tidemarq/internal/hasher"
 	"github.com/tidemarq/tidemarq/internal/manifest"
 	"github.com/tidemarq/tidemarq/internal/mountfs"
@@ -73,6 +74,13 @@ type Config struct {
 	// attempted. Files smaller than this are always copied in full. 0 uses a default of
 	// 65536 bytes.
 	DeltaMinBytes    int64
+	// Filters, when non-nil, drops every source file the ruleset excludes from
+	// the run entirely — the engine treats excluded files as if they did not
+	// exist in the source tree. This is correct for both backup (file is not
+	// copied) and mirror (file is not copied, AND its absence does not cause
+	// a destination delete since the manifest doesn't know about it). nil =
+	// no filtering (legacy behaviour).
+	Filters          *filter.Ruleset
 	OnProgress       func(Progress)   // called after each file is processed; may be nil
 	// OnScan is called periodically during the directory walk with the running count of
 	// files and bytes discovered so far. Throttled to a low rate (≈4/s). May be nil.
@@ -164,7 +172,7 @@ func (e *Engine) Run(ctx context.Context, cfg Config) (*Result, error) {
 func (e *Engine) runBackup(ctx context.Context, cfg Config) (*Result, error) {
 	srcFS, dstFS := resolveFS(cfg)
 
-	files, err := scanFS(ctx, srcFS, cfg.Workers, scanReporter(cfg))
+	files, err := scanFS(ctx, srcFS, cfg.Workers, cfg.Filters, scanReporter(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("scanning source: %w", err)
 	}
@@ -263,11 +271,15 @@ func (e *Engine) runBackup(ctx context.Context, cfg Config) (*Result, error) {
 func (e *Engine) runMirror(ctx context.Context, cfg Config) (*Result, error) {
 	srcFS, dstFS := resolveFS(cfg)
 
-	srcFiles, err := scanFS(ctx, srcFS, cfg.Workers, scanReporter(cfg))
+	srcFiles, err := scanFS(ctx, srcFS, cfg.Workers, cfg.Filters, scanReporter(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("scanning source: %w", err)
 	}
-	destFiles, err := scanFS(ctx, dstFS, cfg.Workers, nil)
+	// Apply the same filter to destination so excluded files are invisible to
+	// the engine on both sides — in mirror mode this prevents the destination
+	// copy of a filtered file from being treated as "missing from source" and
+	// quarantined.
+	destFiles, err := scanFS(ctx, dstFS, cfg.Workers, cfg.Filters, nil)
 	if err != nil {
 		return nil, fmt.Errorf("scanning destination: %w", err)
 	}
@@ -418,11 +430,12 @@ func (e *Engine) runTwoWay(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, fmt.Errorf("two-way sync with network mounts is not yet supported; use one-way-backup or one-way-mirror")
 	}
 
-	srcFiles, err := scanDir(ctx, cfg.SourcePath, cfg.Workers, scanReporter(cfg))
+	srcFiles, err := scanDir(ctx, cfg.SourcePath, cfg.Workers, cfg.Filters, scanReporter(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("scanning source: %w", err)
 	}
-	destFiles, err := scanDir(ctx, cfg.DestinationPath, cfg.Workers, nil)
+	// Same filter to both sides; see runMirror for rationale.
+	destFiles, err := scanDir(ctx, cfg.DestinationPath, cfg.Workers, cfg.Filters, nil)
 	if err != nil {
 		return nil, fmt.Errorf("scanning destination: %w", err)
 	}

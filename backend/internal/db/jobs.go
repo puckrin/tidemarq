@@ -26,6 +26,10 @@ type Job struct {
 	UseDelta         bool       `json:"use_delta"`
 	DeltaBlockSize   int64      `json:"delta_block_size"`
 	DeltaMinBytes    int64      `json:"delta_min_bytes"`
+	// FiltersJSON is the JSON-encoded filter.Ruleset for this job. The DB
+	// layer stores it opaquely; internal/filter owns parsing and validation.
+	// Default "{}" preserves pre-feature behaviour (no filtering).
+	FiltersJSON      string     `json:"filters_json"`
 	LastRunAt        *time.Time `json:"last_run_at,omitempty"`
 	LastError        *string    `json:"last_error,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
@@ -49,6 +53,10 @@ type CreateJobParams struct {
 	UseDelta         bool
 	DeltaBlockSize   int64
 	DeltaMinBytes    int64
+	// FiltersJSON is the JSON-encoded filter.Ruleset. Empty string is replaced
+	// with "{}" on insert so the column default is honoured even when callers
+	// don't supply a value.
+	FiltersJSON      string
 }
 
 // UpdateJobParams holds the fields that may be updated on a job.
@@ -68,6 +76,9 @@ type UpdateJobParams struct {
 	UseDelta         bool
 	DeltaBlockSize   int64
 	DeltaMinBytes    int64
+	// FiltersJSON is the JSON-encoded filter.Ruleset. Empty string is replaced
+	// with "{}" so an Update can't accidentally wipe the column.
+	FiltersJSON      string
 }
 
 // JobNameExists reports whether a job with name already exists. Pass excludeID > 0
@@ -92,10 +103,13 @@ func (db *DB) CreateJob(ctx context.Context, p CreateJobParams) (*Job, error) {
 	if p.ConflictStrategy == "" {
 		p.ConflictStrategy = "ask-user"
 	}
+	if p.FiltersJSON == "" {
+		p.FiltersJSON = "{}"
+	}
 	res, err := db.ExecContext(ctx,
-		`INSERT INTO jobs (name, source_path, destination_path, source_mount_id, dest_mount_id, mode, bandwidth_limit_kb, conflict_strategy, cron_schedule, watch_enabled, full_checksum, hash_algo, use_delta, delta_block_size, delta_min_bytes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, p.SourcePath, p.DestinationPath, p.SourceMountID, p.DestMountID, p.Mode, p.BandwidthLimitKB, p.ConflictStrategy, p.CronSchedule, p.WatchEnabled, p.FullChecksum, p.HashAlgo, p.UseDelta, p.DeltaBlockSize, p.DeltaMinBytes,
+		`INSERT INTO jobs (name, source_path, destination_path, source_mount_id, dest_mount_id, mode, bandwidth_limit_kb, conflict_strategy, cron_schedule, watch_enabled, full_checksum, hash_algo, use_delta, delta_block_size, delta_min_bytes, filters_json)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.SourcePath, p.DestinationPath, p.SourceMountID, p.DestMountID, p.Mode, p.BandwidthLimitKB, p.ConflictStrategy, p.CronSchedule, p.WatchEnabled, p.FullChecksum, p.HashAlgo, p.UseDelta, p.DeltaBlockSize, p.DeltaMinBytes, p.FiltersJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -112,7 +126,7 @@ func (db *DB) GetJobByID(ctx context.Context, id int64) (*Job, error) {
 	row := db.QueryRowContext(ctx,
 		`SELECT id, name, source_path, destination_path, source_mount_id, dest_mount_id, mode, status, bandwidth_limit_kb,
 		        conflict_strategy, cron_schedule, watch_enabled, full_checksum, hash_algo, use_delta, delta_block_size, delta_min_bytes,
-		        last_run_at, last_error, created_at, updated_at
+		        filters_json, last_run_at, last_error, created_at, updated_at
 		 FROM jobs WHERE id = ?`, id,
 	)
 	return scanJobFrom(row)
@@ -123,7 +137,7 @@ func (db *DB) ListJobs(ctx context.Context) ([]*Job, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT id, name, source_path, destination_path, source_mount_id, dest_mount_id, mode, status, bandwidth_limit_kb,
 		        conflict_strategy, cron_schedule, watch_enabled, full_checksum, hash_algo, use_delta, delta_block_size, delta_min_bytes,
-		        last_run_at, last_error, created_at, updated_at
+		        filters_json, last_run_at, last_error, created_at, updated_at
 		 FROM jobs ORDER BY name`,
 	)
 	if err != nil {
@@ -147,15 +161,20 @@ func (db *DB) UpdateJob(ctx context.Context, id int64, p UpdateJobParams) (*Job,
 	if p.ConflictStrategy == "" {
 		p.ConflictStrategy = "ask-user"
 	}
+	if p.FiltersJSON == "" {
+		p.FiltersJSON = "{}"
+	}
 	_, err := db.ExecContext(ctx,
 		`UPDATE jobs SET name = ?, source_path = ?, destination_path = ?, source_mount_id = ?, dest_mount_id = ?,
 		                 mode = ?, bandwidth_limit_kb = ?, conflict_strategy = ?, cron_schedule = ?, watch_enabled = ?,
 		                 full_checksum = ?, hash_algo = ?, use_delta = ?, delta_block_size = ?, delta_min_bytes = ?,
+		                 filters_json = ?,
 		                 updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ?`,
 		p.Name, p.SourcePath, p.DestinationPath, p.SourceMountID, p.DestMountID,
 		p.Mode, p.BandwidthLimitKB, p.ConflictStrategy, p.CronSchedule, p.WatchEnabled,
-		p.FullChecksum, p.HashAlgo, p.UseDelta, p.DeltaBlockSize, p.DeltaMinBytes, id,
+		p.FullChecksum, p.HashAlgo, p.UseDelta, p.DeltaBlockSize, p.DeltaMinBytes,
+		p.FiltersJSON, id,
 	)
 	if err != nil {
 		return nil, err
@@ -208,7 +227,7 @@ func scanJobFrom(s jobScanner) (*Job, error) {
 		&j.ID, &j.Name, &j.SourcePath, &j.DestinationPath, &j.SourceMountID, &j.DestMountID,
 		&j.Mode, &j.Status, &j.BandwidthLimitKB, &j.ConflictStrategy, &j.CronSchedule,
 		&watchEnabled, &fullChecksum, &j.HashAlgo, &useDelta, &j.DeltaBlockSize, &j.DeltaMinBytes,
-		&j.LastRunAt, &j.LastError, &j.CreatedAt, &j.UpdatedAt,
+		&j.FiltersJSON, &j.LastRunAt, &j.LastError, &j.CreatedAt, &j.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound

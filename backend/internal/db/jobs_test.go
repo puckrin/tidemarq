@@ -192,3 +192,97 @@ func TestListJobs_IncludesDeltaFields(t *testing.T) {
 		t.Errorf("ListJobs: DeltaMinBytes = %d, want 65536", list[0].DeltaMinBytes)
 	}
 }
+
+// TestCreateJob_FiltersJSON_DefaultsToEmptyObject verifies that a CreateJob
+// call with no FiltersJSON value stores the column default — "{}". This is
+// load-bearing for the legacy-behaviour guarantee: existing jobs persisted
+// before the filter feature keep syncing every file.
+func TestCreateJob_FiltersJSON_DefaultsToEmptyObject(t *testing.T) {
+	d := newJobTestDB(t)
+	ctx := context.Background()
+
+	j, err := d.CreateJob(ctx, db.CreateJobParams{
+		Name:            "legacy",
+		SourcePath:      t.TempDir(),
+		DestinationPath: t.TempDir(),
+		Mode:            "one-way-backup",
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if j.FiltersJSON != "{}" {
+		t.Errorf("FiltersJSON: got %q, want %q", j.FiltersJSON, "{}")
+	}
+}
+
+// TestCreateJob_FiltersJSON_Roundtrip stores a non-trivial blob and verifies
+// it survives a create → get → list traversal byte-for-byte.
+func TestCreateJob_FiltersJSON_Roundtrip(t *testing.T) {
+	d := newJobTestDB(t)
+	ctx := context.Background()
+
+	const blob = `{"exclude_hidden":true,"rules":[{"type":"glob","action":"exclude","pattern":"**/*.log"}]}`
+	j, err := d.CreateJob(ctx, db.CreateJobParams{
+		Name:            "with-filters",
+		SourcePath:      t.TempDir(),
+		DestinationPath: t.TempDir(),
+		Mode:            "one-way-backup",
+		FiltersJSON:     blob,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if j.FiltersJSON != blob {
+		t.Errorf("after Create: got %q, want %q", j.FiltersJSON, blob)
+	}
+
+	got, err := d.GetJobByID(ctx, j.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if got.FiltersJSON != blob {
+		t.Errorf("after Get: got %q, want %q", got.FiltersJSON, blob)
+	}
+
+	list, err := d.ListJobs(ctx)
+	if err != nil || len(list) != 1 || list[0].FiltersJSON != blob {
+		t.Errorf("after List: got %+v", list)
+	}
+}
+
+// TestUpdateJob_FiltersJSON_EmptyDoesNotWipe verifies the safety guard in
+// UpdateJob: passing an empty FiltersJSON replaces it with "{}" rather than
+// inserting an empty string into the column. This matters because the
+// column has a NOT NULL constraint with a "{}" default — bypassing it with
+// an empty string would persist a value that parseFilters treats correctly
+// (it's the same outcome) but masks intent in DB inspection.
+func TestUpdateJob_FiltersJSON_EmptyDoesNotWipe(t *testing.T) {
+	d := newJobTestDB(t)
+	ctx := context.Background()
+
+	const blob = `{"exclude_hidden":true}`
+	j, err := d.CreateJob(ctx, db.CreateJobParams{
+		Name:            "j",
+		SourcePath:      t.TempDir(),
+		DestinationPath: t.TempDir(),
+		Mode:            "one-way-backup",
+		FiltersJSON:     blob,
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	updated, err := d.UpdateJob(ctx, j.ID, db.UpdateJobParams{
+		Name:            "j",
+		SourcePath:      j.SourcePath,
+		DestinationPath: j.DestinationPath,
+		Mode:            "one-way-backup",
+		// FiltersJSON omitted: empty string → defaults to "{}" in UpdateJob.
+	})
+	if err != nil {
+		t.Fatalf("UpdateJob: %v", err)
+	}
+	if updated.FiltersJSON != "{}" {
+		t.Errorf("after Update with empty FiltersJSON: got %q, want %q", updated.FiltersJSON, "{}")
+	}
+}
