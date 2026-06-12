@@ -154,9 +154,10 @@ test.describe('File-filter wizard (§3.3)', () => {
     await next(page) // -> 6
     await page.getByRole('button', { name: /create job/i }).click()
 
-    // The Review panel surfaces the failure inline; the toast also fires
-    // but we don't rely on it since it auto-dismisses.
-    await expect(page.getByText(/Failed to create job/i)).toBeVisible({ timeout: 8000 })
+    // The Review panel surfaces the failure inline; a toast also fires.
+    // Use `.first()` because both appear simultaneously and strict-mode
+    // would otherwise treat the duplicate as a locator error.
+    await expect(page.getByText(/Failed to create job/i).first()).toBeVisible({ timeout: 8000 })
 
     // Confirm nothing was persisted.
     const token = await getToken(page)
