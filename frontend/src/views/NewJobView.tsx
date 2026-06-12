@@ -3,9 +3,10 @@ import { Check, ArrowLeft, ArrowRight, ChevronDown } from 'lucide-react'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { createJob, updateJob, getJob, listMounts } from '../api/client'
 import { Button } from '../components/Button'
+import { FilterEditor } from '../components/FilterEditor'
 import { PathPicker } from '../components/PathPicker'
 import { useToast } from '../components/Toast'
-import type { Job, Mount } from '../api/types'
+import type { Job, Mount, FilterRuleset } from '../api/types'
 import type { View } from '../components/Sidebar'
 import type { PathValue } from '../components/PathPicker'
 
@@ -14,7 +15,8 @@ interface Props {
   editJobId?: number   // set when editing an existing job
 }
 
-type Step = 1 | 2 | 3 | 4 | 5
+type Step = 1 | 2 | 3 | 4 | 5 | 6
+const LAST_STEP: Step = 6
 
 interface FormState {
   name: string
@@ -28,7 +30,10 @@ interface FormState {
   full_checksum: boolean
   hash_algo: 'sha256' | 'blake3'
   use_delta: boolean
+  filters: FilterRuleset
 }
+
+const EMPTY_FILTERS: FilterRuleset = { exclude_hidden: false, rules: [] }
 
 const INIT: FormState = {
   name: '',
@@ -42,6 +47,14 @@ const INIT: FormState = {
   full_checksum: false,
   hash_algo: 'blake3',
   use_delta: false,
+  filters: EMPTY_FILTERS,
+}
+
+function summariseFilters(rs: FilterRuleset): string {
+  const parts: string[] = []
+  if (rs.exclude_hidden) parts.push('exclude hidden')
+  if (rs.rules.length > 0) parts.push(`${rs.rules.length} rule${rs.rules.length === 1 ? '' : 's'}`)
+  return parts.length === 0 ? 'None' : parts.join(' · ')
 }
 
 function jobToForm(j: Job): FormState {
@@ -57,6 +70,7 @@ function jobToForm(j: Job): FormState {
     full_checksum:      j.full_checksum,
     hash_algo:          (j.hash_algo ?? 'blake3') as 'sha256' | 'blake3',
     use_delta:          j.use_delta ?? false,
+    filters:            j.filters ?? EMPTY_FILTERS,
   }
 }
 
@@ -86,7 +100,7 @@ const STRATEGY_OPTIONS: { value: Job['conflict_strategy']; label: string }[] = [
 function StepIndicator({ step, current }: { step: number; current: Step }) {
   const done   = step < current
   const active = step === current
-  const labels = ['Source & Name', 'Destination', 'Mode', 'Schedule & Transfer', 'Review']
+  const labels = ['Source & Name', 'Destination', 'Mode', 'Filters', 'Schedule & Transfer', 'Review']
   return (
     <div className={`step${active ? ' active' : done ? ' done' : ''}`}>
       <div className="step-num">{done ? <Check size={12}/> : step}</div>
@@ -133,6 +147,13 @@ export function NewJobView({ onNav, editJobId }: Props) {
     mutationFn: () => {
       const watchDisabled = form.mode === 'two-way' &&
         (form.source.mountId != null || form.dest.mountId != null)
+      // Omit `filters` when empty so the API treats it as no-filtering (its
+      // own collapse-to-nil rule). Sending an explicit empty ruleset would
+      // work too — the backend handles both — but omitting keeps the wire
+      // payload tidy and matches the Update-clears-by-omission semantics.
+      const filtersPayload = form.filters.rules.length === 0 && !form.filters.exclude_hidden
+        ? undefined
+        : form.filters
       const payload = {
         name:               form.name,
         source_path:        form.source.path,
@@ -147,6 +168,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
         full_checksum:      form.full_checksum,
         hash_algo:          form.hash_algo,
         use_delta:          form.use_delta,
+        filters:            filtersPayload,
       }
       return isEdit ? updateJob(editJobId!, payload) : createJob(payload)
     },
@@ -165,10 +187,10 @@ export function NewJobView({ onNav, editJobId }: Props) {
 
   const stepRow = (
     <div className="steps">
-      {[1, 2, 3, 4, 5].map((s, i) => (
+      {[1, 2, 3, 4, 5, 6].map((s, i) => (
         <React.Fragment key={s}>
           <StepIndicator step={s} current={step} />
-          {i < 4 && <div className={`step-line${s < step ? ' done' : ''}`} />}
+          {i < 5 && <div className={`step-line${s < step ? ' done' : ''}`} />}
         </React.Fragment>
       ))}
     </div>
@@ -184,7 +206,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
           <ArrowLeft size={14}/> Back
         </Button>
       )}
-      {step < 5
+      {step < LAST_STEP
         ? <Button variant="primary" onClick={() => setStep(s => (s + 1) as Step)}>
             Next <ArrowRight size={14}/>
           </Button>
@@ -312,10 +334,24 @@ export function NewJobView({ onNav, editJobId }: Props) {
           </div>
         )}
 
-        {/* Step 4 — Schedule & Transfer */}
+        {/* Step 4 — Filters */}
         {step === 4 && (
           <div className="card mb16">
-            <div className="card-title mb16">Step 4 — Schedule &amp; Transfer</div>
+            <div className="card-title mb16">Step 4 — File Filters</div>
+            <div className="text3 mb16" style={{ fontSize: 13 }}>
+              Optional rules to exclude (or force-include) files from this job. Leave empty to sync every file the source contains.
+            </div>
+            <FilterEditor
+              value={form.filters}
+              onChange={filters => set({ filters })}
+            />
+          </div>
+        )}
+
+        {/* Step 5 — Schedule & Transfer */}
+        {step === 5 && (
+          <div className="card mb16">
+            <div className="card-title mb16">Step 5 — Schedule &amp; Transfer</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               {(() => {
                 const watchDisabled = form.mode === 'two-way' &&
@@ -443,10 +479,10 @@ export function NewJobView({ onNav, editJobId }: Props) {
           </div>
         )}
 
-        {/* Step 5 — Review */}
-        {step === 5 && (
+        {/* Step 6 — Review */}
+        {step === 6 && (
           <div className="card mb16">
-            <div className="card-title mb16">Step 5 — Review</div>
+            <div className="card-title mb16">Step 6 — Review</div>
             {save.isError && (
               <div style={{ color: 'var(--coral-light)', marginBottom: 16, fontSize: 13 }}>
                 {isEdit ? 'Failed to save changes.' : 'Failed to create job.'} Please check your settings and try again.
@@ -466,6 +502,7 @@ export function NewJobView({ onNav, editJobId }: Props) {
                 ['FS watch',         effectiveWatch ? 'Enabled' : watchDisabled ? 'Disabled (network mount)' : 'Disabled'],
                 ['Cron schedule',    form.cron_schedule || 'None'],
                 ['Bandwidth limit',  form.bandwidth_limit_kb > 0 ? `${form.bandwidth_limit_kb} KB/s` : 'Unlimited'],
+                ['Filters',          summariseFilters(form.filters)],
                 ['Hash algorithm',   form.hash_algo === 'blake3' ? 'BLAKE3' : 'SHA-256'],
                 ['Full verification', form.full_checksum ? 'Yes (slower, reads every file)' : 'No (metadata fast-path)'],
                 ['Delta transfer',   form.use_delta ? 'Enabled' : 'Disabled'],

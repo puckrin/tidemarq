@@ -5,6 +5,33 @@ export interface AppSettings {
   updated_at: string
 }
 
+/** §3.3 file filtering — one entry in the rules list. The Type field
+ *  selects which of pattern / size_* / modified_* fields are used. */
+export type FilterAction = 'include' | 'exclude'
+export type FilterRuleType = 'glob' | 'extension' | 'size' | 'modified'
+
+export interface FilterRule {
+  type: FilterRuleType
+  action: FilterAction
+  /** glob, extension */
+  pattern?: string
+  /** Size — files larger than this many bytes match. */
+  size_above_bytes?: number
+  /** Size — files smaller than this many bytes match. */
+  size_below_bytes?: number
+  /** Modified — files older than this many days match. */
+  modified_before_days_ago?: number
+  /** Modified — files modified within this many days match. */
+  modified_within_days?: number
+}
+
+export interface FilterRuleset {
+  /** When true, hidden files (path segment starts with '.') are excluded
+   *  unless an earlier rule explicitly includes them. */
+  exclude_hidden: boolean
+  rules: FilterRule[]
+}
+
 export interface Job {
   id: number
   name: string
@@ -23,6 +50,8 @@ export interface Job {
   use_delta: boolean
   delta_block_size: number
   delta_min_bytes: number
+  /** §3.3 file-filtering ruleset; absent when no rules and ExcludeHidden=false. */
+  filters?: FilterRuleset
   last_run_at: string | null
   last_error: string | null
   created_at: string
